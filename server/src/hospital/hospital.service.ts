@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+const EARTH_RADIUS_KM = 6371;
 
 @Injectable()
 export class HospitalService {
@@ -13,32 +16,33 @@ export class HospitalService {
   }) {
     const { departmentName, latitude, longitude, radiusKm = 5 } = params;
 
+    const where: Prisma.HospitalWhereInput = {};
+    if (departmentName) {
+      where.departments = {
+        some: { department: { name: { contains: departmentName } } },
+      };
+    }
+
     const hospitals = await this.prisma.hospital.findMany({
-      where: departmentName
-        ? {
-            departments: {
-              some: { department: { name: { contains: departmentName } } },
-            },
-          }
-        : undefined,
+      where,
       include: {
         departments: { include: { department: true } },
       },
     });
 
-    if (latitude && longitude) {
-      return hospitals.filter((hospital) => {
-        const distanceKm = this.calculateDistanceKm(
-          latitude,
-          longitude,
-          hospital.latitude,
-          hospital.longitude,
-        );
-        return distanceKm <= radiusKm;
-      });
+    if (!latitude || !longitude) {
+      return hospitals;
     }
 
-    return hospitals;
+    return hospitals.filter((hospital) => {
+      const distanceKm = this.calculateDistanceKm(
+        latitude,
+        longitude,
+        hospital.latitude,
+        hospital.longitude,
+      );
+      return distanceKm <= radiusKm;
+    });
   }
 
   async getHospitalDetail(hospitalId: number) {
@@ -68,15 +72,19 @@ export class HospitalService {
     hospitalLatitude: number,
     hospitalLongitude: number,
   ): number {
-    const earthRadiusKm = 6371;
-    const deltaLatitude = this.toRadians(hospitalLatitude - userLatitude);
-    const deltaLongitude = this.toRadians(hospitalLongitude - userLongitude);
+    const userLatRad = this.toRadians(userLatitude);
+    const hospitalLatRad = this.toRadians(hospitalLatitude);
+    const deltaLatRad = this.toRadians(hospitalLatitude - userLatitude);
+    const deltaLonRad = this.toRadians(hospitalLongitude - userLongitude);
+
+    const sinHalfDeltaLat = Math.sin(deltaLatRad / 2);
+    const sinHalfDeltaLon = Math.sin(deltaLonRad / 2);
+
     const haversine =
-      Math.sin(deltaLatitude / 2) ** 2 +
-      Math.cos(this.toRadians(userLatitude)) *
-        Math.cos(this.toRadians(hospitalLatitude)) *
-        Math.sin(deltaLongitude / 2) ** 2;
-    return earthRadiusKm * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+      sinHalfDeltaLat * sinHalfDeltaLat +
+      Math.cos(userLatRad) * Math.cos(hospitalLatRad) * sinHalfDeltaLon * sinHalfDeltaLon;
+
+    return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
   }
 
   private toRadians(degrees: number): number {

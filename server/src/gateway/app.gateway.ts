@@ -9,7 +9,7 @@ import { Server, Socket } from 'socket.io';
 @WebSocketGateway({ cors: { origin: '*' } })
 export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   handleConnection(client: Socket) {
     console.log(`Client connected: ${client.id}`);

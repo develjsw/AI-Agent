@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { AppointmentStatus } from '@prisma/client';
+import { AppointmentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -56,8 +56,13 @@ export class AppointmentService {
   }
 
   async getMyAppointments(userId: number, status?: AppointmentStatus) {
+    const where: Prisma.AppointmentWhereInput = { userId };
+    if (status) {
+      where.status = status;
+    }
+
     return this.prisma.appointment.findMany({
-      where: { userId, ...(status && { status }) },
+      where,
       include: {
         doctor: { include: { hospital: true, department: true } },
       },
