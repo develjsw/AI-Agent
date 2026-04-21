@@ -4,6 +4,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { GatewayModule } from './gateway/gateway.module';
 import { ToolsModule } from './tools/tools.module';
 import { AgentModule } from './agent/agent.module';
+import { LivekitModule } from './livekit/livekit.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { AgentModule } from './agent/agent.module';
     GatewayModule,
     ToolsModule,
     AgentModule,
+    LivekitModule,
   ],
 })
 export class AppModule {}
