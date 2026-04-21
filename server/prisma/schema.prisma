@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(50)
+  phone     String   @unique @db.VarChar(20) // unique → 자동 인덱스
+  birthDate DateTime @map("birth_date") @db.Date
+  createdAt DateTime @default(now()) @map("created_at")
+
+  appointments Appointment[]
+
+  @@map("users")
+}
+
+model Hospital {
+  id           Int      @id @default(autoincrement())
+  name         String   @db.VarChar(100)
+  address      String   @db.VarChar(255)
+  latitude     Float
+  longitude    Float
+  phone        String   @db.VarChar(20)
+  weekdayHours String   @map("weekday_hours") @db.VarChar(50) // "09:00-18:00" | "24시간"
+  weekendHours String?  @map("weekend_hours") @db.VarChar(50)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  departments HospitalDepartment[]
+  doctors     Doctor[]
+  waitings    WaitingStatus[]
+
+  // searchHospitals: 위경도 범위 필터링
+  @@index([latitude, longitude])
+  @@map("hospitals")
+}
+
+model Department {
+  id   Int    @id @default(autoincrement())
+  name String @unique @db.VarChar(50) // unique → 자동 인덱스
+
+  hospitals HospitalDepartment[]
+  doctors   Doctor[]
+  waitings  WaitingStatus[]
+
+  @@map("departments")
+}
+
+model HospitalDepartment {
+  hospitalId   Int @map("hospital_id")
+  departmentId Int @map("department_id")
+
+  hospital   Hospital   @relation(fields: [hospitalId], references: [id])
+  department Department @relation(fields: [departmentId], references: [id])
+
+  // searchHospitals: 특정 진료과를 가진 병원 조회
+  @@id([hospitalId, departmentId])
+  @@index([departmentId])
+  @@map("hospital_departments")
+}
+
+model Doctor {
+  id           Int      @id @default(autoincrement())
+  name         String   @db.VarChar(50)
+  hospitalId   Int      @map("hospital_id")
+  departmentId Int      @map("department_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  hospital     Hospital     @relation(fields: [hospitalId], references: [id])
+  department   Department   @relation(fields: [departmentId], references: [id])
+  appointments Appointment[]
+
+  // getAvailableSlots: 특정 병원+진료과의 의사 목록 조회
+  @@index([hospitalId, departmentId])
+  @@map("doctors")
+}
+
+model Appointment {
+  id          Int               @id @default(autoincrement())
+  userId      Int               @map("user_id")
+  doctorId    Int               @map("doctor_id")
+  scheduledAt DateTime          @map("scheduled_at")
+  status      AppointmentStatus @default(PENDING)
+  note        String?           @db.VarChar(500)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  user   User   @relation(fields: [userId], references: [id])
+  doctor Doctor @relation(fields: [doctorId], references: [id])
+
+  // getMyAppointments: 환자별 상태 필터 조회
+  @@index([userId, status])
+  // createAppointment: 의사 시간대 중복 체크
+  @@index([doctorId, scheduledAt])
+  @@map("appointments")
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+model WaitingStatus {
+  hospitalId       Int      @map("hospital_id")
+  departmentId     Int      @map("department_id")
+  waitingCount     Int      @default(0) @map("waiting_count")
+  estimatedMinutes Int      @default(0) @map("estimated_minutes")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  hospital   Hospital   @relation(fields: [hospitalId], references: [id])
+  department Department @relation(fields: [departmentId], references: [id])
+
+  // checkWaitingStatus: 복합 PK가 곧 인덱스
+  @@id([hospitalId, departmentId])
+  @@map("waiting_statuses")
+}
