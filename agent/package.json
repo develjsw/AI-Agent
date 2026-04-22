@@ -9,9 +9,9 @@
     "start": "node --experimental-vm-modules dist/main.js start"
   },
   "dependencies": {
-    "@livekit/agents": "^1.5",
-    "@livekit/agents-plugin-google": "^1.5",
-    "@livekit/agents-plugin-silero": "^1.5",
+    "@livekit/agents": "^1.2",
+    "@livekit/agents-plugin-google": "^1.2",
+    "@livekit/agents-plugin-silero": "^1.2",
     "@prisma/client": "^5.22.0",
     "dotenv": "^17.0.0",
     "zod": "^3.23.0"
