@@ -1,10 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import { AccessToken } from 'livekit-server-sdk';
 
+function requireEnv(key: string): string {
+  const value = process.env[key];
+  if (!value) {
+    throw new Error(`환경변수 ${key}가 설정되지 않았습니다.`);
+  }
+  return value;
+}
+
 @Injectable()
 export class LivekitService {
-  private readonly apiKey = process.env.LIVEKIT_API_KEY!;
-  private readonly apiSecret = process.env.LIVEKIT_API_SECRET!;
+  private readonly apiKey: string;
+  private readonly apiSecret: string;
+
+  constructor() {
+    this.apiKey = requireEnv('LIVEKIT_API_KEY');
+    this.apiSecret = requireEnv('LIVEKIT_API_SECRET');
+  }
 
   async generateToken(roomName: string, participantName: string): Promise<string> {
     const token = new AccessToken(this.apiKey, this.apiSecret, {
