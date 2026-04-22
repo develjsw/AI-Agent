@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, RoomAgentDispatch, RoomConfiguration } from 'livekit-server-sdk';
+
+const AGENT_NAME = 'hospital-voice';
 
 function requireEnv(key: string): string {
   const value = process.env[key];
@@ -25,6 +27,10 @@ export class LivekitService {
     });
 
     token.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true });
+
+    token.roomConfig = new RoomConfiguration({
+      agents: [new RoomAgentDispatch({ agentName: AGENT_NAME })],
+    });
 
     return token.toJwt();
   }

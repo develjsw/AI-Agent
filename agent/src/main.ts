@@ -71,4 +71,11 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+export const AGENT_NAME = 'hospital-voice';
+
+cli.runApp(
+  new ServerOptions({
+    agent: fileURLToPath(import.meta.url),
+    agentName: AGENT_NAME,
+  }),
+);
