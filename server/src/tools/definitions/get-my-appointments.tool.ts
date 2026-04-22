@@ -1,31 +1,29 @@
-import { tool } from '@langchain/core/tools';
-import { z } from 'zod';
-import { AppointmentStatus } from '@prisma/client';
 import { AppointmentService } from '../../appointment/appointment.service';
+import { AppointmentStatus } from '@prisma/client';
+import { AgentTool } from '../agent-tool.interface';
 
-export const createGetMyAppointmentsTool = (appointmentService: AppointmentService) =>
-  tool(
-    async ({ userId, status }) => {
-      const appointments = await appointmentService.getMyAppointments(
-        userId,
-        status as AppointmentStatus | undefined,
-      );
-
-      if (appointments.length === 0) {
-        return '예약 내역이 없습니다.';
-      }
-
-      return JSON.stringify(appointments);
+export const createGetMyAppointmentsTool = (appointmentService: AppointmentService): AgentTool => ({
+  name: 'get_my_appointments',
+  description:
+    '환자의 예약 목록을 조회합니다. 상태(PENDING, CONFIRMED, CANCELLED, COMPLETED)로 필터링 가능합니다.',
+  parameters: {
+    type: 'object',
+    properties: {
+      userId: { type: 'number', description: '환자 ID' },
+      status: {
+        type: 'string',
+        description: '예약 상태 필터',
+        enum: ['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED'],
+      },
     },
-    {
-      name: 'get_my_appointments',
-      description: '환자의 예약 목록을 조회합니다. 상태(PENDING, CONFIRMED, CANCELLED, COMPLETED)로 필터링 가능합니다.',
-      schema: z.object({
-        userId: z.number().describe('환자 ID'),
-        status: z
-          .enum(['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED'])
-          .optional()
-          .describe('예약 상태 필터'),
-      }),
-    },
-  );
+    required: ['userId'],
+  },
+  execute: async (args) => {
+    const appointments = await appointmentService.getMyAppointments(
+      args.userId as number,
+      args.status as AppointmentStatus | undefined,
+    );
+    if (appointments.length === 0) return '예약 내역이 없습니다.';
+    return JSON.stringify(appointments);
+  },
+});

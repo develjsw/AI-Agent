@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { StructuredToolInterface } from '@langchain/core/tools';
 import { HospitalService } from '../hospital/hospital.service';
 import { AppointmentService } from '../appointment/appointment.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AgentTool } from './agent-tool.interface';
 import { createSearchHospitalsTool } from './definitions/search-hospitals.tool';
 import { createGetHospitalDetailTool } from './definitions/get-hospital-detail.tool';
 import { createCheckWaitingStatusTool } from './definitions/check-waiting-status.tool';
@@ -13,7 +13,7 @@ import { createGetMyAppointmentsTool } from './definitions/get-my-appointments.t
 
 @Injectable()
 export class ToolRegistryService {
-  readonly tools: StructuredToolInterface[];
+  readonly tools: AgentTool[];
 
   constructor(
     private readonly hospitalService: HospitalService,
@@ -29,5 +29,11 @@ export class ToolRegistryService {
       createCancelAppointmentTool(this.appointmentService),
       createGetMyAppointmentsTool(this.appointmentService),
     ];
+  }
+
+  getTool(name: string): AgentTool {
+    const tool = this.tools.find((t) => t.name === name);
+    if (!tool) throw new Error(`Tool not found: ${name}`);
+    return tool;
   }
 }
