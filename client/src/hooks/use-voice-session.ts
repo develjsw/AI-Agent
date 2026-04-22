@@ -10,7 +10,7 @@ export type VoiceSessionStatus =
   | { type: 'connected' }
   | { type: 'error'; message: string };
 
-export interface VoiceSessionOptions {
+interface VoiceSessionOptions {
   userId: number;
   displayName: string;
 }

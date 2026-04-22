@@ -1,12 +1,8 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
-export interface TokenRequest {
+interface TokenRequest {
   roomName: string;
   participantName: string;
-}
-
-export interface TokenResponse {
-  token: string;
 }
 
 export async function fetchLivekitToken(request: TokenRequest): Promise<string> {
@@ -20,6 +16,6 @@ export async function fetchLivekitToken(request: TokenRequest): Promise<string> 
     throw new Error(`토큰 발급 실패: ${response.status}`);
   }
 
-  const data = (await response.json()) as TokenResponse;
+  const data: { token: string } = await response.json();
   return data.token;
 }
