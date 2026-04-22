@@ -56,6 +56,7 @@ export default defineAgent({
 
     await session.start({
       agent: new voice.Agent({
+        instructions: INSTRUCTIONS,
         tools: {
           searchHospitals: searchHospitalsTool,
           getHospitalDetail: getHospitalDetailTool,
