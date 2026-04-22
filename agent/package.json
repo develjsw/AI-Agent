@@ -7,9 +7,9 @@
     "schema": "../server/prisma/schema.prisma"
   },
   "scripts": {
-    "dev": "node --experimental-vm-modules dist/main.js dev",
+    "dev": "node --env-file=../.env --experimental-vm-modules dist/main.js dev",
     "build": "tsc",
-    "start": "node --experimental-vm-modules dist/main.js start",
+    "start": "node --env-file=../.env --experimental-vm-modules dist/main.js start",
     "prisma:generate": "prisma generate"
   },
   "dependencies": {
@@ -17,12 +17,11 @@
     "@livekit/agents-plugin-google": "^1.2",
     "@livekit/agents-plugin-silero": "^1.2",
     "@prisma/client": "^5.22.0",
-    "dotenv": "^17.0.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "prisma": "^5.22.0",
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.7.0"
   }
 }
