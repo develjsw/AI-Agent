@@ -1,12 +1,10 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-
 interface TokenRequest {
   roomName: string;
   participantName: string;
 }
 
 export async function fetchLivekitToken(request: TokenRequest): Promise<string> {
-  const response = await fetch(`${API_BASE_URL}/livekit/token`, {
+  const response = await fetch('/livekit/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
