@@ -1,7 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { createAgent } from 'langchain';
-import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
-import { HumanMessage, AIMessage, BaseMessage } from '@langchain/core/messages';
+import { GoogleGenerativeAI, Content } from '@google/generative-ai';
 import { ToolRegistryService } from '../tools/tool-registry.service';
 
 const SYSTEM_PROMPT = `
@@ -23,37 +21,54 @@ const SYSTEM_PROMPT = `
 
 @Injectable()
 export class AgentService {
-  private readonly agent: ReturnType<typeof createAgent>;
-  private readonly sessionHistories = new Map<string, BaseMessage[]>();
+  private readonly model;
+  private readonly sessionHistories = new Map<string, Content[]>();
 
   constructor(private readonly toolRegistryService: ToolRegistryService) {
-    const model = new ChatGoogleGenerativeAI({
-      model: 'gemini-2.0-flash',
-      apiKey: process.env.GOOGLE_API_KEY,
-    });
+    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 
-    this.agent = createAgent({
-      model,
-      tools: this.toolRegistryService.tools,
-      systemPrompt: SYSTEM_PROMPT,
+    this.model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      systemInstruction: SYSTEM_PROMPT,
+      tools: [
+        {
+          functionDeclarations: this.toolRegistryService.tools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+          })),
+        },
+      ],
     });
   }
 
   async processMessage(sessionId: string, userMessage: string): Promise<string> {
     const history = this.getOrCreateHistory(sessionId);
+    const chat = this.model.startChat({ history });
 
-    const result = await this.agent.invoke({
-      messages: [...history, new HumanMessage(userMessage)],
-    });
+    let result = await chat.sendMessage(userMessage);
 
-    const lastMessage = result.messages[result.messages.length - 1];
-    const responseText = this.extractTextContent(lastMessage);
+    while (result.response.functionCalls()?.length) {
+      const calls = result.response.functionCalls()!;
 
-    this.sessionHistories.set(sessionId, [
-      ...history,
-      new HumanMessage(userMessage),
-      new AIMessage(responseText),
-    ]);
+      const toolResponses = await Promise.all(
+        calls.map(async (call) => {
+          const tool = this.toolRegistryService.getTool(call.name);
+          const output = await tool.execute(call.args as Record<string, unknown>);
+          return { name: call.name, response: { output } };
+        }),
+      );
+
+      result = await chat.sendMessage(
+        toolResponses.map((r) => ({ functionResponse: r })),
+      );
+    }
+
+    const responseText = result.response.text();
+
+    history.push({ role: 'user', parts: [{ text: userMessage }] });
+    history.push({ role: 'model', parts: [{ text: responseText }] });
+    this.sessionHistories.set(sessionId, history);
 
     return responseText;
   }
@@ -62,17 +77,10 @@ export class AgentService {
     this.sessionHistories.delete(sessionId);
   }
 
-  private getOrCreateHistory(sessionId: string): BaseMessage[] {
+  private getOrCreateHistory(sessionId: string): Content[] {
     if (!this.sessionHistories.has(sessionId)) {
       this.sessionHistories.set(sessionId, []);
     }
     return this.sessionHistories.get(sessionId)!;
-  }
-
-  private extractTextContent(message: BaseMessage): string {
-    if (typeof message.content === 'string') {
-      return message.content;
-    }
-    return JSON.stringify(message.content);
   }
 }
