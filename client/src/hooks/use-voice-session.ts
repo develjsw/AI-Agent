@@ -2,7 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { Room, RoomEvent } from 'livekit-client';
 import { fetchLivekitToken } from '../api/livekit-token';
 
-const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL;
+function getLivekitUrl(): string {
+  const url = import.meta.env.VITE_LIVEKIT_URL;
+  if (!url) {
+    throw new Error(
+      'VITE_LIVEKIT_URL이 설정되지 않았습니다. 루트 .env에 추가해주세요.',
+    );
+  }
+  return url;
+}
 
 export type VoiceSessionStatus =
   | { type: 'idle' }
@@ -42,7 +50,7 @@ export function useVoiceSession({ userId, displayName }: VoiceSessionOptions) {
         setStatus({ type: 'idle' });
       });
 
-      await newRoom.connect(LIVEKIT_URL, token);
+      await newRoom.connect(getLivekitUrl(), token);
       await newRoom.localParticipant.setMicrophoneEnabled(true);
 
       setRoom(newRoom);
