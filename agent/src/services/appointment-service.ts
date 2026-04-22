@@ -6,20 +6,20 @@ const ACTIVE_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.CONFIRMED,
 ];
 
-export interface CreateAppointmentInput {
+interface CreateAppointmentInput {
   userId: number;
   doctorId: number;
   scheduledAt: Date;
   note?: string;
 }
 
-export type CancelAppointmentResult =
+type CancelAppointmentResult =
   | { type: 'success'; appointment: Awaited<ReturnType<AppointmentService['cancelById']>> }
   | { type: 'not_found' }
   | { type: 'forbidden' }
   | { type: 'already_cancelled' };
 
-export type CreateAppointmentResult =
+type CreateAppointmentResult =
   | { type: 'success'; appointment: Awaited<ReturnType<AppointmentService['createNew']>> }
   | { type: 'conflict' };
 

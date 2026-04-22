@@ -2,7 +2,7 @@ import { prisma } from '../prisma.js';
 
 const EARTH_RADIUS_KM = 6371;
 
-export interface HospitalSearchParams {
+interface HospitalSearchParams {
   departmentName?: string;
   latitude?: number;
   longitude?: number;
