@@ -1,28 +1,7 @@
 import { llm } from '@livekit/agents';
 import { z } from 'zod';
-import { prisma } from '../prisma.js';
-
-const EARTH_RADIUS_KM = 6371;
-
-function calculateDistanceKm(
-  userLatitude: number,
-  userLongitude: number,
-  hospitalLatitude: number,
-  hospitalLongitude: number,
-): number {
-  const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
-
-  const deltaLatitude = toRadians(hospitalLatitude - userLatitude);
-  const deltaLongitude = toRadians(hospitalLongitude - userLongitude);
-
-  const haversine =
-    Math.sin(deltaLatitude / 2) ** 2 +
-    Math.cos(toRadians(userLatitude)) *
-      Math.cos(toRadians(hospitalLatitude)) *
-      Math.sin(deltaLongitude / 2) ** 2;
-
-  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
-}
+import { hospitalService } from '../services/hospital-service.js';
+import { failureResponse, successResponse } from './tool-response.js';
 
 export const searchHospitalsTool = llm.tool({
   description:
@@ -34,23 +13,16 @@ export const searchHospitalsTool = llm.tool({
     radiusKm: z.number().optional().default(5).describe('검색 반경 (km, 기본값: 5)'),
   }),
   execute: async ({ departmentName, latitude, longitude, radiusKm = 5 }) => {
-    const hospitals = await prisma.hospital.findMany({
-      where: departmentName
-        ? { departments: { some: { department: { name: { contains: departmentName } } } } }
-        : undefined,
-      include: { departments: { include: { department: true } } },
+    const hospitals = await hospitalService.search({
+      departmentName,
+      latitude,
+      longitude,
+      radiusKm,
     });
 
-    const filtered =
-      latitude && longitude
-        ? hospitals.filter(
-            (hospital) =>
-              calculateDistanceKm(latitude, longitude, hospital.latitude, hospital.longitude) <=
-              radiusKm,
-          )
-        : hospitals;
-
-    if (filtered.length === 0) return '조건에 맞는 병원을 찾을 수 없습니다.';
-    return JSON.stringify(filtered);
+    if (hospitals.length === 0) {
+      return failureResponse('조건에 맞는 병원을 찾을 수 없습니다.');
+    }
+    return successResponse(hospitals);
   },
 });
