@@ -12,10 +12,15 @@ export const cancelAppointmentTool = llm.tool({
   execute: async ({ appointmentId, userId }) => {
     const result = await appointmentService.cancel(appointmentId, userId);
 
-    if (result.type === 'not_found') return failureResponse('예약을 찾을 수 없습니다.');
-    if (result.type === 'forbidden') return failureResponse('본인의 예약만 취소할 수 있습니다.');
-    if (result.type === 'already_cancelled') return failureResponse('이미 취소된 예약입니다.');
-
-    return successResponse(result.appointment);
+    switch (result.type) {
+      case 'not_found':
+        return failureResponse('예약을 찾을 수 없습니다.');
+      case 'forbidden':
+        return failureResponse('본인의 예약만 취소할 수 있습니다.');
+      case 'already_cancelled':
+        return failureResponse('이미 취소된 예약입니다.');
+      case 'success':
+        return successResponse(result.appointment);
+    }
   },
 });
