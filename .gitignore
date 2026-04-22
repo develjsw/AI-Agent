@@ -2,4 +2,6 @@
 .claude
 .idea
 .env
-server/prisma.config.ts.bak
+
+# Prisma 공용 generated 산출물
+/prisma/generated

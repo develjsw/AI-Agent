@@ -55,7 +55,6 @@ pids
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
-.omc
-
-/generated/prisma
+# Prisma 마이그레이션 (개발자 로컬 생성)
 /prisma/migrations
+

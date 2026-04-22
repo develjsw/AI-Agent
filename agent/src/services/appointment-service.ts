@@ -1,5 +1,5 @@
 import { prisma } from '../prisma.js';
-import { AppointmentStatus } from '../../prisma/generated/index.js';
+import { AppointmentStatus } from '../../../prisma/generated/index.js';
 
 const ACTIVE_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.PENDING,

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { PrismaClient, AppointmentStatus } from '@prisma/client';
+import { PrismaClient, AppointmentStatus } from '../../prisma/generated/index.js';
 
 const prisma = new PrismaClient();
 
