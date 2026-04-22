@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "node --experimental-vm-modules dist/main.js dev",
     "build": "tsc",
-    "start": "node --experimental-vm-modules dist/main.js start"
+    "start": "node --experimental-vm-modules dist/main.js start",
+    "prisma:generate": "prisma generate"
   },
   "dependencies": {
     "@livekit/agents": "^1.2",
