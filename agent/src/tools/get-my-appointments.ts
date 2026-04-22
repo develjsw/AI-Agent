@@ -1,7 +1,8 @@
 import { llm } from '@livekit/agents';
 import { z } from 'zod';
+import { appointmentService } from '../services/appointment-service.js';
 import { AppointmentStatus } from '../../prisma/generated/index.js';
-import { prisma } from '../prisma.js';
+import { failureResponse, successResponse } from './tool-response.js';
 
 export const getMyAppointmentsTool = llm.tool({
   description:
@@ -14,18 +15,12 @@ export const getMyAppointmentsTool = llm.tool({
       .describe('예약 상태 필터'),
   }),
   execute: async ({ userId, status }) => {
-    const appointments = await prisma.appointment.findMany({
-      where: {
-        userId,
-        ...(status ? { status: status as AppointmentStatus } : {}),
-      },
-      include: {
-        doctor: { include: { hospital: true, department: true } },
-      },
-      orderBy: { scheduledAt: 'asc' },
-    });
+    const appointments = await appointmentService.listByUser(
+      userId,
+      status as AppointmentStatus | undefined,
+    );
 
-    if (appointments.length === 0) return '예약 내역이 없습니다.';
-    return JSON.stringify(appointments);
+    if (appointments.length === 0) return failureResponse('예약 내역이 없습니다.');
+    return successResponse(appointments);
   },
 });

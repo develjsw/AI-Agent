@@ -1,7 +1,7 @@
 import { llm } from '@livekit/agents';
 import { z } from 'zod';
-import { AppointmentStatus } from '../../prisma/generated/index.js';
-import { prisma } from '../prisma.js';
+import { appointmentService } from '../services/appointment-service.js';
+import { failureResponse, successResponse } from './tool-response.js';
 
 export const cancelAppointmentTool = llm.tool({
   description: '예약 ID와 환자 ID로 예약을 취소합니다.',
@@ -10,20 +10,12 @@ export const cancelAppointmentTool = llm.tool({
     userId: z.number().describe('환자 ID'),
   }),
   execute: async ({ appointmentId, userId }) => {
-    const appointment = await prisma.appointment.findUnique({
-      where: { id: appointmentId },
-    });
+    const result = await appointmentService.cancel(appointmentId, userId);
 
-    if (!appointment) return '예약을 찾을 수 없습니다.';
-    if (appointment.userId !== userId) return '본인의 예약만 취소할 수 있습니다.';
-    if (appointment.status === AppointmentStatus.CANCELLED) return '이미 취소된 예약입니다.';
+    if (result.type === 'not_found') return failureResponse('예약을 찾을 수 없습니다.');
+    if (result.type === 'forbidden') return failureResponse('본인의 예약만 취소할 수 있습니다.');
+    if (result.type === 'already_cancelled') return failureResponse('이미 취소된 예약입니다.');
 
-    const updated = await prisma.appointment.update({
-      where: { id: appointmentId },
-      data: { status: AppointmentStatus.CANCELLED },
-      include: { doctor: { include: { hospital: true } } },
-    });
-
-    return JSON.stringify(updated);
+    return successResponse(result.appointment);
   },
 });

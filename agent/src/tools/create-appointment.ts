@@ -1,7 +1,7 @@
 import { llm } from '@livekit/agents';
 import { z } from 'zod';
-import { AppointmentStatus } from '../../prisma/generated/index.js';
-import { prisma } from '../prisma.js';
+import { appointmentService } from '../services/appointment-service.js';
+import { failureResponse, successResponse } from './tool-response.js';
 
 export const createAppointmentTool = llm.tool({
   description: '의사와 날짜/시간을 지정하여 진료 예약을 생성합니다.',
@@ -12,26 +12,16 @@ export const createAppointmentTool = llm.tool({
     note: z.string().optional().describe('증상 또는 요청 사항'),
   }),
   execute: async ({ userId, doctorId, scheduledAt, note }) => {
-    const scheduledDate = new Date(scheduledAt);
-
-    const conflict = await prisma.appointment.findFirst({
-      where: {
-        doctorId,
-        scheduledAt: scheduledDate,
-        status: { in: [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] },
-      },
+    const result = await appointmentService.create({
+      userId,
+      doctorId,
+      scheduledAt: new Date(scheduledAt),
+      note,
     });
 
-    if (conflict) return '해당 시간에 이미 예약이 존재합니다.';
-
-    const appointment = await prisma.appointment.create({
-      data: { userId, doctorId, scheduledAt: scheduledDate, note },
-      include: {
-        doctor: { include: { hospital: true, department: true } },
-        user: true,
-      },
-    });
-
-    return JSON.stringify(appointment);
+    if (result.type === 'conflict') {
+      return failureResponse('해당 시간에 이미 예약이 존재합니다.');
+    }
+    return successResponse(result.appointment);
   },
 });
