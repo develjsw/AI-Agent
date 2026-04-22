@@ -4,19 +4,24 @@ import { prisma } from '../prisma.js';
 
 const EARTH_RADIUS_KM = 6371;
 
-function calcDistanceKm(
-  userLat: number,
-  userLon: number,
-  hospLat: number,
-  hospLon: number,
+function calculateDistanceKm(
+  userLatitude: number,
+  userLongitude: number,
+  hospitalLatitude: number,
+  hospitalLongitude: number,
 ): number {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(hospLat - userLat);
-  const dLon = toRad(hospLon - userLon);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(userLat)) * Math.cos(toRad(hospLat)) * Math.sin(dLon / 2) ** 2;
-  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+
+  const deltaLatitude = toRadians(hospitalLatitude - userLatitude);
+  const deltaLongitude = toRadians(hospitalLongitude - userLongitude);
+
+  const haversine =
+    Math.sin(deltaLatitude / 2) ** 2 +
+    Math.cos(toRadians(userLatitude)) *
+      Math.cos(toRadians(hospitalLatitude)) *
+      Math.sin(deltaLongitude / 2) ** 2;
+
+  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 }
 
 export const searchHospitalsTool = llm.tool({
@@ -39,7 +44,9 @@ export const searchHospitalsTool = llm.tool({
     const filtered =
       latitude && longitude
         ? hospitals.filter(
-            (h) => calcDistanceKm(latitude, longitude, h.latitude, h.longitude) <= radiusKm,
+            (hospital) =>
+              calculateDistanceKm(latitude, longitude, hospital.latitude, hospital.longitude) <=
+              radiusKm,
           )
         : hospitals;
 
