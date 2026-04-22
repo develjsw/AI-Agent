@@ -1,6 +1,10 @@
 import { RoomAudioRenderer, RoomContext } from '@livekit/components-react';
 import type { Room } from 'livekit-client';
-import { useVoiceSession, type VoiceSessionStatus } from '../hooks/use-voice-session';
+import {
+  MAX_RECONNECT_ATTEMPTS,
+  useVoiceSession,
+  type VoiceSessionStatus,
+} from '../hooks/use-voice-session';
 import styles from './voice-room.module.css';
 
 const DEMO_USER_ID = 1;
@@ -52,6 +56,12 @@ function SessionView(props: SessionViewProps) {
       );
     case 'connecting':
       return <span className={styles.statusLabel}>연결 중...</span>;
+    case 'reconnecting':
+      return (
+        <span className={styles.statusLabel}>
+          재연결 중... ({props.status.attempt}/{MAX_RECONNECT_ATTEMPTS})
+        </span>
+      );
     case 'error':
       return (
         <>
