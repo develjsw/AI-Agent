@@ -1,6 +1,6 @@
 import { llm } from '@livekit/agents';
 import { z } from 'zod';
-import { AppointmentStatus } from '@prisma/client';
+import { AppointmentStatus } from '../../prisma/generated/index.js';
 import { prisma } from '../prisma.js';
 
 export const getMyAppointmentsTool = llm.tool({
