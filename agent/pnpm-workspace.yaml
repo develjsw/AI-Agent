@@ -1,7 +1,0 @@
-onlyBuiltDependencies:
-  - '@prisma/client'
-  - '@prisma/engines'
-  - onnxruntime-node
-  - prisma
-  - protobufjs
-  - sharp

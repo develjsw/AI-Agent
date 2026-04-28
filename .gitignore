@@ -2,6 +2,3 @@
 .claude
 .idea
 .env
-
-# Prisma 공용 generated 산출물
-/prisma/generated
