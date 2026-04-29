@@ -2,3 +2,7 @@
 .claude
 .idea
 .env
+
+node_modules
+dist
+*.log
