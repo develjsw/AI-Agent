@@ -5,6 +5,7 @@ import { fetchUrlTool } from '../tools/fetch-url.ts';
 import { Findings, type Task } from '../schemas.ts';
 import { MODELS, LIMITS } from '../config.ts';
 import { trace } from '../helper/trace.ts';
+import type { Usage } from '../helper/cost.ts';
 
 const SYSTEM = `단일 리서치 질문에 집중하는 워커.
 
@@ -23,7 +24,12 @@ const SYSTEM = `단일 리서치 질문에 집중하는 워커.
 - findings는 짧게 (3~5문장).
 - 못 찾으면 findings에 "정보 부족" 적고 citations는 빈 배열로 submit_findings.`;
 
-export async function runWorker(workerId: string, task: Task): Promise<Findings> {
+export type WorkerCompletion = {
+  findings: Findings;
+  usage: Usage;
+};
+
+export async function runWorker(workerId: string, task: Task): Promise<WorkerCompletion> {
   let submission: Findings | null = null;
 
   const result = await generateText({
@@ -57,7 +63,12 @@ export async function runWorker(workerId: string, task: Task): Promise<Findings>
     },
   });
 
-  if (submission) return submission;
+  const usage: Usage = {
+    promptTokens: result.usage.promptTokens,
+    completionTokens: result.usage.completionTokens,
+  };
+
+  if (submission) return { findings: submission, usage };
 
   if (result.text) {
     trace({
@@ -65,7 +76,7 @@ export async function runWorker(workerId: string, task: Task): Promise<Findings>
       agentId: workerId,
       reason: 'submit_findings 호출 없이 종료. 텍스트로 대체.',
     });
-    return { findings: result.text, citations: [] };
+    return { findings: { findings: result.text, citations: [] }, usage };
   }
 
   trace({
@@ -73,5 +84,8 @@ export async function runWorker(workerId: string, task: Task): Promise<Findings>
     agentId: workerId,
     reason: '답변 생성 실패 (maxSteps 도달). 빈 결과 반환.',
   });
-  return { findings: `(워커 ${workerId}: 답변을 생성하지 못함)`, citations: [] };
+  return {
+    findings: { findings: `(워커 ${workerId}: 답변을 생성하지 못함)`, citations: [] },
+    usage,
+  };
 }

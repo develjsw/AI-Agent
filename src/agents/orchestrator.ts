@@ -6,6 +6,7 @@ import { runWorker } from './worker.ts';
 import { MODELS, LIMITS } from '../config.ts';
 import { trace } from '../helper/trace.ts';
 import { toErrorMessage } from '../helper/error.ts';
+import { calcCost, sumUsage, type Stats, type Usage } from '../helper/cost.ts';
 
 const AssignInput = z.object({
   tasks: z
@@ -36,14 +37,23 @@ const SYSTEM = `리서치 오케스트레이터.
 - summary는 사용자 질문에 직접 답해야 함.
 - citations는 워커들이 가져온 것에서 선택. 새로 만들지 말 것.`;
 
-async function runWorkersInParallel(round: number, tasks: Task[]) {
+async function runWorkersInParallel(
+  round: number,
+  tasks: Task[],
+  collectUsage: (usage: Usage) => void,
+) {
   return Promise.all(
     tasks.map(async (task, i) => {
       const workerId = `r${round}-w${i + 1}`;
       try {
-        const findings = await runWorker(workerId, task);
-        trace({ event: 'worker_done', agentId: workerId, citationCount: findings.citations.length });
-        return { taskId: task.id, ...findings };
+        const completion = await runWorker(workerId, task);
+        collectUsage(completion.usage);
+        trace({
+          event: 'worker_done',
+          agentId: workerId,
+          citationCount: completion.findings.citations.length,
+        });
+        return { taskId: task.id, ...completion.findings };
       } catch (err) {
         // 워커가 throw해도 데이터로 변환 — 한 워커 실패가 라운드 전체를 무너뜨리지 않도록.
         const message = toErrorMessage(err);
@@ -58,7 +68,14 @@ async function runWorkersInParallel(round: number, tasks: Task[]) {
   );
 }
 
-export async function research(question: string): Promise<Report> {
+export type ResearchResult = {
+  report: Report;
+  stats: Stats;
+};
+
+export async function research(question: string): Promise<ResearchResult> {
+  const startMs = Date.now();
+  const workerUsages: Usage[] = [];
   let report: Report | null = null;
   let round = 0;
   let totalWorkers = 0;
@@ -95,7 +112,7 @@ export async function research(question: string): Promise<Report> {
             tasks: accepted.map((t) => ({ id: t.id, question: t.question })),
           });
 
-          return runWorkersInParallel(round, accepted);
+          return runWorkersInParallel(round, accepted, (u) => workerUsages.push(u));
         },
       }),
       write_final_report: tool({
@@ -112,7 +129,24 @@ export async function research(question: string): Promise<Report> {
     maxSteps: LIMITS.maxOrchestratorSteps,
   });
 
-  if (report) return report;
+  const orchestratorUsage: Usage = {
+    promptTokens: result.usage.promptTokens,
+    completionTokens: result.usage.completionTokens,
+  };
+  const orchestratorCost = calcCost(MODELS.orchestrator, orchestratorUsage);
+  const workersCost = workerUsages.reduce((sum, u) => sum + calcCost(MODELS.worker, u), 0);
+  const totalUsage = sumUsage([orchestratorUsage, ...workerUsages]);
+
+  const stats: Stats = {
+    elapsedMs: Date.now() - startMs,
+    rounds: round,
+    workers: totalWorkers,
+    promptTokens: totalUsage.promptTokens,
+    completionTokens: totalUsage.completionTokens,
+    totalCost: orchestratorCost + workersCost,
+  };
+
+  if (report) return { report, stats };
 
   if (result.text) {
     trace({
@@ -120,7 +154,7 @@ export async function research(question: string): Promise<Report> {
       agentId: 'orchestrator',
       reason: 'write_final_report 없이 종료. 텍스트로 대체.',
     });
-    return { summary: result.text, citations: [] };
+    return { report: { summary: result.text, citations: [] }, stats };
   }
 
   throw new Error('리포트를 받지 못함.');
