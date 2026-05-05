@@ -2,7 +2,19 @@
 .claude
 .idea
 .env
+.env.local
 
 node_modules
 dist
 *.log
+*.tsbuildinfo
+
+# Local data — never commit dumps, embeddings, or eval reports
+data/raw/
+data/normalized/
+data/chroma/
+src/evaluation/reports/
+
+# OS
+.DS_Store
+Thumbs.db
