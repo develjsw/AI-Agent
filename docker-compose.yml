@@ -1,0 +1,13 @@
+services:
+  chroma:
+    image: chromadb/chroma:0.5.23
+    container_name: ai-agent-chroma
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/chroma:/data
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/data
+      - ANONYMIZED_TELEMETRY=FALSE

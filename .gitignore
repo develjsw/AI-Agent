@@ -1,11 +1,13 @@
 .omc
 .claude
 .idea
+.vscode
 .env
 .env.local
 
 node_modules
 dist
+coverage
 *.log
 *.tsbuildinfo
 
@@ -15,6 +17,12 @@ data/normalized/
 data/chroma/
 src/evaluation/reports/
 
+# Secrets / certs — never commit
+*.pem
+*.key
+*.p12
+
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
