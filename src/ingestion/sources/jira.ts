@@ -1,20 +1,9 @@
-import { createHash } from "node:crypto";
-import { Document, child, loadConfig } from "@/shared/index.js";
+import { Document, child, loadConfig, uuidV5 } from "@/shared/index.js";
 
 const log = child({ module: "ingestion.jira" });
 
 // Jira 키마다 동일한 UUID가 나오도록 고정한 namespace
 const JIRA_UUID_NAMESPACE = "9b9c0d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e";
-
-function uuidV5(name: string, namespace: string): string {
-  const namespaceBytes = Buffer.from(namespace.replace(/-/g, ""), "hex");
-  const hash = createHash("sha1").update(namespaceBytes).update(name).digest();
-  const uuidBytes = Buffer.from(hash.subarray(0, 16));
-  uuidBytes.writeUInt8((uuidBytes.readUInt8(6) & 0x0f) | 0x50, 6);
-  uuidBytes.writeUInt8((uuidBytes.readUInt8(8) & 0x3f) | 0x80, 8);
-  const hex = uuidBytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
-}
 
 export interface JiraEnv {
   site: string;
