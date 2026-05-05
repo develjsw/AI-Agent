@@ -1,30 +1,39 @@
-import { v5 as uuidv5 } from "uuid";
-import { z } from "zod";
-import { Document, type Document as Doc } from "@/shared/schema.js";
-import { child } from "@/shared/logger.js";
+import { createHash } from "node:crypto";
+import { Document, child, loadConfig } from "@/shared/index.js";
 
 const log = child({ module: "ingestion.jira" });
 
-// Stable namespace so re-ingesting the same key produces the same UUID.
+// Jira 키마다 동일한 UUID가 나오도록 고정한 namespace
 const JIRA_UUID_NAMESPACE = "9b9c0d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e";
 
-const JiraEnv = z.object({
-  ATLASSIAN_SITE: z.string().min(1),
-  ATLASSIAN_EMAIL: z.string().email(),
-  ATLASSIAN_API_TOKEN: z.string().min(1),
-});
+function uuidV5(name: string, namespace: string): string {
+  const namespaceBytes = Buffer.from(namespace.replace(/-/g, ""), "hex");
+  const hash = createHash("sha1").update(namespaceBytes).update(name).digest();
+  const uuidBytes = Buffer.from(hash.subarray(0, 16));
+  uuidBytes.writeUInt8((uuidBytes.readUInt8(6) & 0x0f) | 0x50, 6);
+  uuidBytes.writeUInt8((uuidBytes.readUInt8(8) & 0x3f) | 0x80, 8);
+  const hex = uuidBytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
 
-export function loadJiraEnv() {
-  const parsed = JiraEnv.safeParse(process.env);
-  if (!parsed.success) {
-    const issues = parsed.error.issues
-      .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
-      .join("\n");
+export interface JiraEnv {
+  site: string;
+  email: string;
+  token: string;
+}
+
+export function loadJiraEnv(): JiraEnv {
+  const config = loadConfig();
+  if (!config.ATLASSIAN_SITE || !config.ATLASSIAN_EMAIL || !config.ATLASSIAN_API_TOKEN) {
     throw new Error(
-      `Missing Atlassian environment for Jira ingestion:\n${issues}`,
+      "Missing Atlassian environment for Jira ingestion: ATLASSIAN_SITE, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN",
     );
   }
-  return parsed.data;
+  return {
+    site: config.ATLASSIAN_SITE,
+    email: config.ATLASSIAN_EMAIL,
+    token: config.ATLASSIAN_API_TOKEN,
+  };
 }
 
 const DEFAULT_FIELDS = [
@@ -49,11 +58,16 @@ interface AdfNode {
   content?: AdfNode[];
 }
 
-/**
- * Walk an Atlassian Document Format tree and emit plain text.
- * Covers the block/inline node types we actually see in ITSM tickets.
- * Unknown nodes fall through to their children — never throw on shape drift.
- */
+function isAdfNode(value: unknown): value is AdfNode {
+  return typeof value === "object" && value !== null;
+}
+
+function headingLevel(attrs: Record<string, unknown> | undefined): number {
+  const level = attrs?.level;
+  if (typeof level === "number") return level;
+  return 1;
+}
+
 function adfToText(node: unknown): string {
   if (node == null) return "";
   if (typeof node === "string") return node;
@@ -68,16 +82,18 @@ function adfToText(node: unknown): string {
       return "\n";
     case "paragraph":
       return children + "\n\n";
-    case "heading": {
-      const level = Number((node.attrs as { level?: number } | undefined)?.level ?? 1);
-      return `${"#".repeat(level)} ${children}\n\n`;
-    }
+    case "heading":
+      return `${"#".repeat(headingLevel(node.attrs))} ${children}\n\n`;
     case "bulletList":
-      return (node.content ?? []).map((li) => `- ${adfToText(li).trim()}\n`).join("") + "\n";
+      return (
+        (node.content ?? [])
+          .map((item) => `- ${adfToText(item).trim()}\n`)
+          .join("") + "\n"
+      );
     case "orderedList":
       return (
         (node.content ?? [])
-          .map((li, i) => `${i + 1}. ${adfToText(li).trim()}\n`)
+          .map((item, index) => `${index + 1}. ${adfToText(item).trim()}\n`)
           .join("") + "\n"
       );
     case "listItem":
@@ -87,20 +103,19 @@ function adfToText(node: unknown): string {
     case "blockquote":
       return children
         .split("\n")
-        .map((l) => (l ? `> ${l}` : l))
+        .map((line) => {
+          if (!line) return line;
+          return `> ${line}`;
+        })
         .join("\n");
     case "rule":
       return "\n---\n";
     case "doc":
       return children;
+    // 알 수 없는 타입은 자식 노드만 이어붙여 내용 손실 방지
     default:
-      // Unknown — walk children rather than dropping content.
       return children;
   }
-}
-
-function isAdfNode(v: unknown): v is AdfNode {
-  return typeof v === "object" && v !== null;
 }
 
 interface JiraComment {
@@ -144,7 +159,7 @@ export class JiraClient {
   private readonly authHeader: string;
   readonly site: string;
 
-  constructor(env: { site: string; email: string; token: string }) {
+  constructor(env: JiraEnv) {
     this.site = env.site;
     this.baseUrl = `https://${env.site}/rest/api/3`;
     this.authHeader =
@@ -152,7 +167,7 @@ export class JiraClient {
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    const response = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: {
         Authorization: this.authHeader,
@@ -161,11 +176,13 @@ export class JiraClient {
         ...(init.headers ?? {}),
       },
     });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Jira API ${res.status} ${res.statusText}: ${body.slice(0, 500)}`);
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(
+        `Jira API ${response.status} ${response.statusText}: ${body.slice(0, 500)}`,
+      );
     }
-    return (await res.json()) as T;
+    return (await response.json()) as T;
   }
 
   async getIssue(keyOrId: string, fields = DEFAULT_FIELDS): Promise<JiraIssue> {
@@ -179,63 +196,59 @@ export class JiraClient {
     batchSize = 50,
   ): AsyncGenerator<JiraIssue> {
     let nextPageToken: string | undefined;
-    let page = 0;
+    let pageNumber = 0;
     while (true) {
-      const body: Record<string, unknown> = {
+      const requestBody: Record<string, unknown> = {
         jql,
         fields,
         maxResults: batchSize,
       };
-      if (nextPageToken) body.nextPageToken = nextPageToken;
+      if (nextPageToken) requestBody.nextPageToken = nextPageToken;
 
-      const res = await this.request<SearchResponse>(`/search/jql`, {
+      const response = await this.request<SearchResponse>(`/search/jql`, {
         method: "POST",
-        body: JSON.stringify(body),
+        body: JSON.stringify(requestBody),
       });
-      page += 1;
-      log.debug({ page, batch: res.issues.length, isLast: res.isLast }, "search page");
-      for (const issue of res.issues) yield issue;
-      if (res.isLast || !res.nextPageToken) break;
-      nextPageToken = res.nextPageToken;
+      pageNumber += 1;
+      log.debug(
+        { page: pageNumber, batch: response.issues.length, isLast: response.isLast },
+        "search page",
+      );
+      for (const issue of response.issues) yield issue;
+      if (response.isLast || !response.nextPageToken) break;
+      nextPageToken = response.nextPageToken;
     }
   }
 }
 
-/**
- * Convert a raw Jira issue into a normalized Document.
- * - Drops automation/bot comments (accountType === "app").
- * - Folds summary + description + human comments into a single content blob.
- */
-export function issueToDocument(issue: JiraIssue, site: string): Doc {
+export function issueToDocument(issue: JiraIssue, site: string): Document {
   const key = issue.key;
   const summary = issue.fields.summary ?? "";
   const description = adfToText(issue.fields.description).trim();
 
+  // 봇,자동화 댓글(accountType === "app")은 노이즈가 많아 제외
   const humanComments = (issue.fields.comment?.comments ?? []).filter(
-    (c) => c.author?.accountType !== "app",
+    (comment) => comment.author?.accountType !== "app",
   );
 
   const commentsText = humanComments
-    .map((c) => {
-      const who = c.author?.displayName ?? "unknown";
-      const when = c.created;
-      const body = adfToText(c.body).trim();
-      return `### ${who} — ${when}\n${body}`;
+    .map((comment) => {
+      const author = comment.author?.displayName ?? "unknown";
+      const createdAt = comment.created;
+      const body = adfToText(comment.body).trim();
+      return `### ${author} — ${createdAt}\n${body}`;
     })
     .join("\n\n");
 
-  const content = [
-    `# [${key}] ${summary}`.trim(),
-    description ? `## 설명\n${description}` : "",
-    commentsText ? `## 댓글\n${commentsText}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  const sections = [`# [${key}] ${summary}`.trim()];
+  if (description) sections.push(`## 설명\n${description}`);
+  if (commentsText) sections.push(`## 댓글\n${commentsText}`);
+  const content = sections.join("\n\n");
 
   const projectKey = key.split("-")[0] ?? "UNKNOWN";
 
-  const doc: Doc = {
-    id: uuidv5(`jira:${key}`, JIRA_UUID_NAMESPACE),
+  const document: Document = {
+    id: uuidV5(`jira:${key}`, JIRA_UUID_NAMESPACE),
     source: "jira",
     sourceId: key,
     sourceUrl: `https://${site}/browse/${key}`,
@@ -256,11 +269,13 @@ export function issueToDocument(issue: JiraIssue, site: string): Doc {
       assigneeAccountId: issue.fields.assignee?.accountId,
       reporterAccountId: issue.fields.reporter?.accountId,
       labels: issue.fields.labels ?? [],
-      components: (issue.fields.components ?? []).map((c) => c.name).filter(Boolean),
+      components: (issue.fields.components ?? [])
+        .map((component) => component.name)
+        .filter(Boolean),
       commentCount: humanComments.length,
       commentCountWithBots: issue.fields.comment?.comments?.length ?? 0,
     },
   };
 
-  return Document.parse(doc);
+  return Document.parse(document);
 }
