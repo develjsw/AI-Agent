@@ -1,6 +1,6 @@
 services:
   chroma:
-    image: chromadb/chroma:0.5.23
+    image: chromadb/chroma:latest
     container_name: ai-agent-chroma
     restart: unless-stopped
     ports:

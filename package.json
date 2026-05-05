@@ -12,12 +12,14 @@
     "typecheck": "tsc --noEmit",
     "ingest": "tsx --env-file=.env src/ingestion/pipeline.ts",
     "chunk": "tsx --env-file=.env src/ingestion/chunk-pipeline.ts",
+    "embed": "tsx --env-file=.env src/ingestion/embed-pipeline.ts",
     "eval": "tsx --env-file=.env src/evaluation/run.ts",
     "api:dev": "tsx watch --env-file=.env src/api/index.ts",
     "chroma:up": "docker compose up -d chroma",
     "chroma:down": "docker compose down"
   },
   "dependencies": {
+    "chromadb": "^3.4.3",
     "gpt-tokenizer": "^3.4.0",
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",
