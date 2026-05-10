@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import yaml from "yaml";
@@ -11,7 +11,24 @@ import { evaluateAnswerRelevancy, evaluateFaithfulness } from "@/evaluation/judg
 const log = child({ module: "evaluation" });
 
 const GOLDEN_SET_PATH = resolve("src/evaluation/golden-set.yaml");
+const REPORTS_DIR = resolve("src/evaluation/reports");
 const GoldenSetSchema = z.array(GoldenQA);
+
+interface Summary {
+  totalQuestions: number;
+  avgRecall: number;
+  avgFaithfulness: number;
+  avgAnswerRelevancy: number;
+  fullHits: number;
+  misses: number;
+}
+
+interface Report {
+  timestamp: string;
+  goldenSetSize: number;
+  summary: Summary;
+  rows: EvaluationRow[];
+}
 
 interface EvaluationRow {
   id: string;
@@ -97,19 +114,50 @@ function average(rows: EvaluationRow[], pick: (row: EvaluationRow) => number): n
   return sum / rows.length;
 }
 
-function printSummary(rows: EvaluationRow[]): void {
-  const total = rows.length;
-  const avgRecall = average(rows, (row) => row.recall);
-  const avgFaith = average(rows, (row) => row.faithfulness);
-  const avgRel = average(rows, (row) => row.answerRelevancy);
-  const fullHits = rows.filter((row) => row.recall === 1).length;
-  const misses = rows.filter((row) => row.recall === 0).length;
+function buildSummary(rows: EvaluationRow[]): Summary {
+  return {
+    totalQuestions: rows.length,
+    avgRecall: average(rows, (row) => row.recall),
+    avgFaithfulness: average(rows, (row) => row.faithfulness),
+    avgAnswerRelevancy: average(rows, (row) => row.answerRelevancy),
+    fullHits: rows.filter((row) => row.recall === 1).length,
+    misses: rows.filter((row) => row.recall === 0).length,
+  };
+}
 
-  console.log(`\n총 ${total}개`);
+function printSummary(summary: Summary): void {
+  const { totalQuestions, avgRecall, avgFaithfulness, avgAnswerRelevancy, fullHits, misses } =
+    summary;
+  console.log(`\n총 ${totalQuestions}개`);
   console.log(`  평균 recall@5      : ${avgRecall.toFixed(3)}`);
-  console.log(`  평균 faithfulness  : ${avgFaith.toFixed(3)}`);
-  console.log(`  평균 answer rel.   : ${avgRel.toFixed(3)}`);
-  console.log(`  완전 회수: ${fullHits}/${total}  |  완전 미스: ${misses}/${total}\n`);
+  console.log(`  평균 faithfulness  : ${avgFaithfulness.toFixed(3)}`);
+  console.log(`  평균 answer rel.   : ${avgAnswerRelevancy.toFixed(3)}`);
+  console.log(`  완전 회수: ${fullHits}/${totalQuestions}  |  완전 미스: ${misses}/${totalQuestions}\n`);
+}
+
+// 파일명용 timestamp slug — UTC 기준 yyyymmdd-hhmmss
+function timestampSlug(date: Date): string {
+  const yyyy = date.getUTCFullYear();
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(date.getUTCDate()).padStart(2, "0");
+  const hh = String(date.getUTCHours()).padStart(2, "0");
+  const mi = String(date.getUTCMinutes()).padStart(2, "0");
+  const ss = String(date.getUTCSeconds()).padStart(2, "0");
+  return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`;
+}
+
+function writeReport(rows: EvaluationRow[], summary: Summary): string {
+  const now = new Date();
+  const report: Report = {
+    timestamp: now.toISOString(),
+    goldenSetSize: rows.length,
+    summary,
+    rows,
+  };
+  mkdirSync(REPORTS_DIR, { recursive: true });
+  const path = resolve(REPORTS_DIR, `eval-${timestampSlug(now)}.json`);
+  writeFileSync(path, JSON.stringify(report, null, 2), "utf-8");
+  return path;
 }
 
 async function main() {
@@ -131,7 +179,12 @@ async function main() {
 
   console.log("\n=== 평가 결과 ===\n");
   for (const row of rows) printRow(row);
-  printSummary(rows);
+
+  const summary = buildSummary(rows);
+  printSummary(summary);
+
+  const reportPath = writeReport(rows, summary);
+  log.info({ path: reportPath }, "report saved");
 }
 
 main().catch((err) => {
