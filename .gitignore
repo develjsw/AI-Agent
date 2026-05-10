@@ -12,10 +12,9 @@ coverage
 *.tsbuildinfo
 
 # Local data — never commit dumps, embeddings, or eval reports
-data/raw/
-data/normalized/
-data/chroma/
+data/
 src/evaluation/reports/
+src/evaluation/golden-set.yaml
 
 # Secrets / certs — never commit
 *.pem

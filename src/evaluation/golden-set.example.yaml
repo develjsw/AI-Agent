@@ -1,0 +1,19 @@
+# 골든 Q&A 평가셋 — RAG 검색·답변 품질 측정용 (사용자가 채워나가는 핵심 자산)
+# 형식: src/shared/schema.ts 의 GoldenQA[]
+#
+# 작성 가이드:
+#   - 목표: 30개 이상 (MVP 평가 기준)
+#   - 시간 의존 표현(최근/지난주/오늘) 회피 — RAG 한계, MCP 라우터에서 보완 예정
+#   - 의미 기반 질문 권장: "어떻게 처리했지?", "왜 이렇게 결정했지?"
+#   - 작성 절차: ① 본문 보고 질문 발상 → ② `pnpm qa "..."` 로 top-5 검증 → ③ 잡히는 것만 추가
+#   - tags 로 분류 시 평가에서 카테고리별 점수 분리 가능
+#
+# 형식 예시:
+# - id: q-001
+#   question: "신규 직원 온보딩 절차 어디서 확인할 수 있어?"
+#   expectedAnswerSummary: "Confluence HR 공간의 '신규입사자 가이드' 페이지 참조"
+#   expectedSources:
+#     - ITSM-1234   # Jira 키 형식 (현재 run.ts 비교 기준)
+#   tags: [onboarding, hr]
+
+[]
