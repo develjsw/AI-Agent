@@ -18,6 +18,7 @@ export interface AnswerSource {
   title: string;
   url: string;
   distance: number;
+  content: string;
 }
 
 export interface AnswerResult {
@@ -130,6 +131,7 @@ export async function answerQuestion(
     title: asString(result.metadata.title),
     url: asString(result.metadata.sourceUrl),
     distance: result.distance,
+    content: result.document,
   }));
 
   return { question, answer, sources };

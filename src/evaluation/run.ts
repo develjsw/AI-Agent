@@ -6,6 +6,7 @@ import yaml from "yaml";
 import { GoldenQA } from "@/shared/schema.js";
 import { child, loadConfig } from "@/shared/index.js";
 import { answerQuestion } from "@/agents/qa.js";
+import { evaluateAnswerRelevancy, evaluateFaithfulness } from "@/evaluation/judge.js";
 
 const log = child({ module: "evaluation" });
 
@@ -21,6 +22,10 @@ interface EvaluationRow {
   recall: number;
   topDistance: number;
   answer: string;
+  faithfulness: number;
+  faithfulnessReasoning: string;
+  answerRelevancy: number;
+  answerRelevancyReasoning: string;
 }
 
 // Jira 이슈 URL에서 키 추출 (예: .../browse/ITSM-3226 → ITSM-3226)
@@ -45,6 +50,13 @@ async function evaluateOne(qa: GoldenQA): Promise<EvaluationRow> {
   const recall = qa.expectedSources.length === 0 ? 1 : hits.length / qa.expectedSources.length;
   const topDistance = result.sources[0]?.distance ?? Number.NaN;
 
+  // LLM-as-judge 메트릭은 faithfulness ↔ answer relevancy 의존성 없음 → 병렬 호출
+  const contexts = result.sources.map((source) => source.content);
+  const [faith, relevancy] = await Promise.all([
+    evaluateFaithfulness(qa.question, result.answer, contexts),
+    evaluateAnswerRelevancy(qa.question, result.answer),
+  ]);
+
   return {
     id: qa.id,
     question: qa.question,
@@ -54,6 +66,10 @@ async function evaluateOne(qa: GoldenQA): Promise<EvaluationRow> {
     recall,
     topDistance,
     answer: result.answer,
+    faithfulness: faith.score,
+    faithfulnessReasoning: faith.reasoning,
+    answerRelevancy: relevancy.score,
+    answerRelevancyReasoning: relevancy.reasoning,
   };
 }
 
@@ -66,22 +82,34 @@ function recallTag(recall: number): string {
 function printRow(row: EvaluationRow): void {
   const tag = recallTag(row.recall);
   console.log(
-    `[${tag}] ${row.id}  recall=${row.recall.toFixed(2)}  top1_dist=${row.topDistance.toFixed(3)}`,
+    `[${tag}] ${row.id}  recall=${row.recall.toFixed(2)}  faith=${row.faithfulness.toFixed(2)}  rel=${row.answerRelevancy.toFixed(2)}  top1_dist=${row.topDistance.toFixed(3)}`,
   );
   console.log(`        Q: ${row.question}`);
   console.log(`        expected: [${row.expectedSources.join(", ")}]`);
   console.log(`        retrieved(top5): [${row.retrievedSources.join(", ")}]`);
+  console.log(`        faith: ${row.faithfulnessReasoning}`);
+  console.log(`        rel  : ${row.answerRelevancyReasoning}`);
+}
+
+function average(rows: EvaluationRow[], pick: (row: EvaluationRow) => number): number {
+  if (rows.length === 0) return 0;
+  const sum = rows.reduce((acc, row) => acc + pick(row), 0);
+  return sum / rows.length;
 }
 
 function printSummary(rows: EvaluationRow[]): void {
   const total = rows.length;
-  const sumRecall = rows.reduce((acc, row) => acc + row.recall, 0);
-  const avgRecall = sumRecall / total;
+  const avgRecall = average(rows, (row) => row.recall);
+  const avgFaith = average(rows, (row) => row.faithfulness);
+  const avgRel = average(rows, (row) => row.answerRelevancy);
   const fullHits = rows.filter((row) => row.recall === 1).length;
   const misses = rows.filter((row) => row.recall === 0).length;
 
-  console.log(`\n총 ${total}개  |  평균 recall@5: ${avgRecall.toFixed(3)}`);
-  console.log(`완전 회수: ${fullHits}/${total}  |  완전 미스: ${misses}/${total}\n`);
+  console.log(`\n총 ${total}개`);
+  console.log(`  평균 recall@5      : ${avgRecall.toFixed(3)}`);
+  console.log(`  평균 faithfulness  : ${avgFaith.toFixed(3)}`);
+  console.log(`  평균 answer rel.   : ${avgRel.toFixed(3)}`);
+  console.log(`  완전 회수: ${fullHits}/${total}  |  완전 미스: ${misses}/${total}\n`);
 }
 
 async function main() {
