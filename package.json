@@ -14,6 +14,7 @@
     "chunk": "tsx --env-file=.env src/ingestion/chunk-pipeline.ts",
     "embed": "tsx --env-file=.env src/ingestion/embed-pipeline.ts",
     "qa": "tsx --env-file=.env src/agents/qa-cli.ts",
+    "tickets": "tsx --env-file=.env src/evaluation/list-tickets.ts",
     "eval": "tsx --env-file=.env src/evaluation/run.ts",
     "api:dev": "tsx watch --env-file=.env src/api/index.ts",
     "chroma:up": "docker compose up -d chroma",
