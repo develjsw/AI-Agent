@@ -1,12 +1,15 @@
 import { type Config, child, loadConfig } from "@/shared/index.js";
 import { embedTexts } from "@/ingestion/embed.js";
-import { ChromaVectorStore, type QueryResult } from "@/retrieval/vector-store.js";
+import { ChromaVectorStore } from "@/retrieval/vector-store.js";
+import { type Bm25Index, fuseRrf, loadBm25Index } from "@/retrieval/hybrid.js";
 
 const log = child({ module: "agents.qa" });
 
 const COLLECTION_NAME = "documents";
 const DEFAULT_TOP_K = 5;
 const DEFAULT_MAX_TOKENS = 1024;
+// vector / BM25 각각 폭넓게 가져온 뒤 RRF로 좁히기
+const FETCH_K = 10;
 
 const SYSTEM_PROMPT = `당신은 사내 지식 어시스턴트입니다. 주어진 컨텍스트를 바탕으로 질문에 정확하게 답하세요.
 - 컨텍스트에 없는 내용은 추측하지 말고 "주어진 자료로는 알 수 없습니다"라고 답하세요.
@@ -38,17 +41,25 @@ interface GenerateOptions {
   maxTokens: number;
 }
 
+interface MergedChunk {
+  id: string;
+  content: string;
+  title: string;
+  sourceUrl: string;
+  // vector에서 잡힌 경우만 실제 거리, BM25만 잡힌 경우 NaN
+  distance: number;
+}
+
 function asString(value: unknown): string {
   if (typeof value === "string") return value;
   return "";
 }
 
-function buildUserPrompt(question: string, results: QueryResult[]): string {
-  const contexts = results.map((result, index) => {
-    const title = asString(result.metadata.title);
-    const url = asString(result.metadata.sourceUrl);
-    return `[${index + 1}] ${result.document}\n출처: ${title} (${url})`;
-  });
+function buildUserPrompt(question: string, chunks: MergedChunk[]): string {
+  const contexts = chunks.map(
+    (chunk, index) =>
+      `[${index + 1}] ${chunk.content}\n출처: ${chunk.title} (${chunk.sourceUrl})`,
+  );
   return `질문: ${question}\n\n컨텍스트:\n${contexts.join("\n\n")}`;
 }
 
@@ -101,6 +112,15 @@ async function generateAnswer(
   }
 }
 
+// BM25 인덱스는 한 번 빌드해 모듈 레벨 캐시 (eval 다회 호출 시 오버헤드 제거)
+let cachedBm25Index: Bm25Index | null = null;
+
+async function getBm25Index(): Promise<Bm25Index> {
+  if (cachedBm25Index) return cachedBm25Index;
+  cachedBm25Index = await loadBm25Index();
+  return cachedBm25Index;
+}
+
 export async function answerQuestion(
   question: string,
   options: AnswerOptions = {},
@@ -118,20 +138,74 @@ export async function answerQuestion(
     collectionName: COLLECTION_NAME,
   });
   await store.init();
-  const results = await store.query(questionEmbedding, topK);
-  log.info({ topK, retrieved: results.length }, "retrieved chunks");
 
-  const answer = await generateAnswer(config, SYSTEM_PROMPT, buildUserPrompt(question, results), {
-    model,
-    maxTokens,
-  });
+  const [vectorResults, bm25Index] = await Promise.all([
+    store.query(questionEmbedding, FETCH_K),
+    getBm25Index(),
+  ]);
+  const bm25Results = bm25Index.search(question, FETCH_K);
 
-  const sources: AnswerSource[] = results.map((result, index) => ({
+  // chunk id 합집합으로 메타 정보 모음
+  const merged = new Map<string, MergedChunk>();
+  for (const result of vectorResults) {
+    merged.set(result.id, {
+      id: result.id,
+      content: result.document,
+      title: asString(result.metadata.title),
+      sourceUrl: asString(result.metadata.sourceUrl),
+      distance: result.distance,
+    });
+  }
+  for (const result of bm25Results) {
+    if (merged.has(result.id)) continue;
+    merged.set(result.id, {
+      id: result.id,
+      content: result.content,
+      title: asString(result.metadata.title),
+      sourceUrl: asString(result.metadata.sourceUrl),
+      distance: Number.NaN,
+    });
+  }
+
+  // RRF 점수로 두 ranking 결합 → top-K
+  const fusedScores = fuseRrf([
+    vectorResults.map((result, i) => ({ id: result.id, rank: i + 1 })),
+    bm25Results.map((result, i) => ({ id: result.id, rank: i + 1 })),
+  ]);
+  const topIds = [...fusedScores.entries()]
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, topK)
+    .map(([id]) => id);
+
+  const topChunks: MergedChunk[] = [];
+  for (const id of topIds) {
+    const chunk = merged.get(id);
+    if (chunk) topChunks.push(chunk);
+  }
+
+  log.info(
+    {
+      topK,
+      retrieved: topChunks.length,
+      vectorCount: vectorResults.length,
+      bm25Count: bm25Results.length,
+    },
+    "hybrid retrieved",
+  );
+
+  const answer = await generateAnswer(
+    config,
+    SYSTEM_PROMPT,
+    buildUserPrompt(question, topChunks),
+    { model, maxTokens },
+  );
+
+  const sources: AnswerSource[] = topChunks.map((chunk, index) => ({
     rank: index + 1,
-    title: asString(result.metadata.title),
-    url: asString(result.metadata.sourceUrl),
-    distance: result.distance,
-    content: result.document,
+    title: chunk.title,
+    url: chunk.sourceUrl,
+    distance: chunk.distance,
+    content: chunk.content,
   }));
 
   return { question, answer, sources };

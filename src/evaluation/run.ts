@@ -98,8 +98,11 @@ function recallTag(recall: number): string {
 
 function printRow(row: EvaluationRow): void {
   const tag = recallTag(row.recall);
+  let topDistance: string;
+  if (Number.isNaN(row.topDistance)) topDistance = "n/a";
+  else topDistance = row.topDistance.toFixed(3);
   console.log(
-    `[${tag}] ${row.id}  recall=${row.recall.toFixed(2)}  faith=${row.faithfulness.toFixed(2)}  rel=${row.answerRelevancy.toFixed(2)}  top1_dist=${row.topDistance.toFixed(3)}`,
+    `[${tag}] ${row.id}  recall=${row.recall.toFixed(2)}  faith=${row.faithfulness.toFixed(2)}  rel=${row.answerRelevancy.toFixed(2)}  top1_dist=${topDistance}`,
   );
   console.log(`        Q: ${row.question}`);
   console.log(`        expected: [${row.expectedSources.join(", ")}]`);

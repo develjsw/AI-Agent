@@ -20,9 +20,10 @@ async function main() {
   console.log(`답변:\n${result.answer}\n`);
   console.log(`출처:`);
   for (const source of result.sources) {
-    console.log(
-      `  [${source.rank}] ${source.title} — ${source.url}  (distance=${source.distance.toFixed(3)})`,
-    );
+    let distance: string;
+    if (Number.isNaN(source.distance)) distance = "n/a (BM25)";
+    else distance = source.distance.toFixed(3);
+    console.log(`  [${source.rank}] ${source.title} — ${source.url}  (distance=${distance})`);
   }
 }
 
