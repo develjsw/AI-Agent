@@ -2,6 +2,7 @@ import { type Config, child, loadConfig } from "@/shared/index.js";
 import { embedTexts } from "@/ingestion/embed.js";
 import { ChromaVectorStore } from "@/retrieval/vector-store.js";
 import { type Bm25Index, fuseRrf, loadBm25Index } from "@/retrieval/hybrid.js";
+import { type RerankCandidate, rerankWithLlm } from "@/retrieval/rerank.js";
 
 const log = child({ module: "agents.qa" });
 
@@ -10,6 +11,8 @@ const DEFAULT_TOP_K = 5;
 const DEFAULT_MAX_TOKENS = 1024;
 // vector / BM25 각각 폭넓게 가져온 뒤 RRF로 좁히기
 const FETCH_K = 10;
+// RRF 융합 후 LLM rerank에 넘길 후보 개수. topK보다 넉넉히 잡아 재정렬 여지 확보
+const RERANK_INPUT_K = 10;
 
 const SYSTEM_PROMPT = `당신은 사내 지식 어시스턴트입니다. 주어진 컨텍스트를 바탕으로 질문에 정확하게 답하세요.
 - 컨텍스트에 없는 내용은 추측하지 말고 "주어진 자료로는 알 수 없습니다"라고 답하세요.
@@ -167,15 +170,31 @@ export async function answerQuestion(
     });
   }
 
-  // RRF 점수로 두 ranking 결합 → top-K
+  // RRF 점수로 두 ranking 결합 → rerank 후보 풀(topK보다 넓게)
   const fusedScores = fuseRrf([
     vectorResults.map((result, i) => ({ id: result.id, rank: i + 1 })),
     bm25Results.map((result, i) => ({ id: result.id, rank: i + 1 })),
   ]);
-  const topIds = [...fusedScores.entries()]
+  const rerankInputIds = [...fusedScores.entries()]
     .sort(([, a], [, b]) => b - a)
-    .slice(0, topK)
+    .slice(0, RERANK_INPUT_K)
     .map(([id]) => id);
+
+  const rerankCandidates: RerankCandidate[] = [];
+  for (const id of rerankInputIds) {
+    const chunk = merged.get(id);
+    if (chunk) {
+      rerankCandidates.push({ id: chunk.id, title: chunk.title, content: chunk.content });
+    }
+  }
+
+  // LLM rerank로 점수화 → 내림차순 정렬, 동점은 RRF 순서 유지
+  const rerankResults = await rerankWithLlm(config, question, rerankCandidates, { model });
+  const rerankScoreMap = new Map(rerankResults.map((entry) => [entry.id, entry.score]));
+  const topIds = rerankInputIds
+    .slice()
+    .sort((a, b) => (rerankScoreMap.get(b) ?? 0) - (rerankScoreMap.get(a) ?? 0))
+    .slice(0, topK);
 
   const topChunks: MergedChunk[] = [];
   for (const id of topIds) {
@@ -189,8 +208,9 @@ export async function answerQuestion(
       retrieved: topChunks.length,
       vectorCount: vectorResults.length,
       bm25Count: bm25Results.length,
+      rerankCandidates: rerankCandidates.length,
     },
-    "hybrid retrieved",
+    "hybrid + rerank retrieved",
   );
 
   const answer = await generateAnswer(
