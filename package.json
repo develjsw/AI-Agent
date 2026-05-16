@@ -15,6 +15,7 @@
     "embed": "tsx --env-file=.env src/ingestion/embed-pipeline.ts",
     "qa": "tsx --env-file=.env src/agents/qa-cli.ts",
     "mcp:tools": "tsx --env-file=.env src/agents/mcp-tools-cli.ts",
+    "mcp:issue": "tsx --env-file=.env src/agents/mcp-issue-cli.ts",
     "tickets": "tsx --env-file=.env src/evaluation/list-tickets.ts",
     "eval": "tsx --env-file=.env src/evaluation/run.ts",
     "api:dev": "tsx watch --env-file=.env src/api/index.ts",
