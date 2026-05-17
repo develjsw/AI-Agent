@@ -3,8 +3,7 @@ import { resolve } from "node:path";
 import { z } from "zod";
 import yaml from "yaml";
 
-import { GoldenQA } from "@/shared/schema.js";
-import { child, loadConfig } from "@/shared/index.js";
+import { GoldenQA, child, loadConfig } from "@/shared/index.js";
 import { answerQuestion } from "@/agents/qa.js";
 import { evaluateAnswerRelevancy, evaluateFaithfulness } from "@/evaluation/judge.js";
 

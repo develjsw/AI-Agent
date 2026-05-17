@@ -1,5 +1,5 @@
-import { createAtlassianMcpClient } from "./mcp-clients.js";
-import { getJiraIssue, summarizeJiraIssue } from "./tools/jira-issue.js";
+import { createAtlassianClient } from "../mcp/atlassian-client.js";
+import { getJiraIssue, summarizeJiraIssue } from "../mcp/tools/jira-issue.js";
 
 async function main(): Promise<void> {
   const key = process.argv[2];
@@ -8,7 +8,7 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const { client, close } = await createAtlassianMcpClient();
+  const { client, close } = await createAtlassianClient();
   try {
     const raw = await getJiraIssue(client, key);
     const summary = summarizeJiraIssue(raw);

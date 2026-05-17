@@ -1,7 +1,7 @@
-import { createAtlassianMcpClient } from "./mcp-clients.js";
+import { createAtlassianClient } from "../mcp/atlassian-client.js";
 
 async function main(): Promise<void> {
-  const { client, close } = await createAtlassianMcpClient();
+  const { client, close } = await createAtlassianClient();
   try {
     const tools = await client.listTools();
     console.log(`\n사용 가능한 도구 ${tools.tools.length}개:\n`);

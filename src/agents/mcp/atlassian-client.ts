@@ -163,19 +163,19 @@ function respondPlain(res: ServerResponse, status: number, body: string): void {
   res.end(body);
 }
 
-export interface AtlassianMcpClient {
+export interface AtlassianClient {
   client: Client;
   transport: StreamableHTTPClientTransport;
   close: () => Promise<void>;
 }
 
-export interface AtlassianMcpClientOptions {
+export interface AtlassianClientOptions {
   authDir?: string;
 }
 
-export async function createAtlassianMcpClient(
-  opts: AtlassianMcpClientOptions = {},
-): Promise<AtlassianMcpClient> {
+export async function createAtlassianClient(
+  opts: AtlassianClientOptions = {},
+): Promise<AtlassianClient> {
   const authDir = opts.authDir ?? join(process.cwd(), "data", "auth", "atlassian");
   const provider = new FileAuthProvider({
     client: join(authDir, "client.json"),
@@ -209,7 +209,7 @@ export async function createAtlassianMcpClient(
   return wrap(client, transport);
 }
 
-function wrap(client: Client, transport: StreamableHTTPClientTransport): AtlassianMcpClient {
+function wrap(client: Client, transport: StreamableHTTPClientTransport): AtlassianClient {
   return {
     client,
     transport,

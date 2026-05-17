@@ -1,5 +1,5 @@
 import { loadConfig } from "@/shared/index.js";
-import { routeQuestion } from "./router.js";
+import { routeQuestion } from "../router.js";
 
 async function main(): Promise<void> {
   const question = process.argv.slice(2).join(" ").trim();

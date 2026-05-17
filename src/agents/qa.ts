@@ -4,9 +4,13 @@ import { ChromaVectorStore } from "@/retrieval/vector-store.js";
 import { type Bm25Index, fuseRrf, loadBm25Index } from "@/retrieval/hybrid.js";
 import { type RerankCandidate, rerankWithLlm } from "@/retrieval/rerank.js";
 
-import { type AtlassianMcpClient, createAtlassianMcpClient } from "./mcp-clients.js";
+import { type AtlassianClient, createAtlassianClient } from "./mcp/atlassian-client.js";
 import { type RouterDecision, type RouterResult, routeQuestion } from "./router.js";
-import { type JiraIssueSummary, getJiraIssue, summarizeJiraIssue } from "./tools/jira-issue.js";
+import {
+  type JiraIssueSummary,
+  getJiraIssue,
+  summarizeJiraIssue,
+} from "./mcp/tools/jira-issue.js";
 
 const log = child({ module: "agents.qa" });
 
@@ -165,11 +169,11 @@ async function getBm25Index(): Promise<Bm25Index> {
   return cachedBm25Index;
 }
 
-let cachedMcpClient: AtlassianMcpClient | null = null;
+let cachedMcpClient: AtlassianClient | null = null;
 
-async function getMcpClient(): Promise<AtlassianMcpClient> {
+async function getMcpClient(): Promise<AtlassianClient> {
   if (cachedMcpClient) return cachedMcpClient;
-  cachedMcpClient = await createAtlassianMcpClient();
+  cachedMcpClient = await createAtlassianClient();
   return cachedMcpClient;
 }
 
