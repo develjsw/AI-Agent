@@ -57,11 +57,15 @@ export const Chunk = z.object({
 });
 export type Chunk = z.infer<typeof Chunk>;
 
+export const RouterDecisionLabel = z.enum(["RAG", "MCP", "HYBRID"]);
+export type RouterDecisionLabel = z.infer<typeof RouterDecisionLabel>;
+
 export const GoldenQA = z.object({
   id: z.string(),
   question: z.string(),
   expectedAnswerSummary: z.string(),
   expectedSources: z.array(z.string()),
+  expectedDecision: RouterDecisionLabel.optional(),
   tags: z.array(z.string()).default([]),
 });
 export type GoldenQA = z.infer<typeof GoldenQA>;

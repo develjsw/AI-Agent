@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { z } from "zod";
 import yaml from "yaml";
 
-import { GoldenQA, child, loadConfig } from "@/shared/index.js";
+import { GoldenQA, type RouterDecisionLabel, child, loadConfig } from "@/shared/index.js";
 import { answerQuestion } from "@/agents/qa.js";
 import { evaluateAnswerRelevancy, evaluateFaithfulness } from "@/evaluation/judge.js";
 
@@ -20,6 +20,8 @@ interface Summary {
   avgAnswerRelevancy: number;
   fullHits: number;
   misses: number;
+  routingAccuracy: number | null;
+  routingScored: number;
 }
 
 interface Report {
@@ -42,6 +44,9 @@ interface EvaluationRow {
   faithfulnessReasoning: string;
   answerRelevancy: number;
   answerRelevancyReasoning: string;
+  expectedDecision: RouterDecisionLabel | null;
+  actualDecision: RouterDecisionLabel;
+  routingMatch: boolean | null;
 }
 
 // Jira 이슈 URL에서 키 추출 (예: .../browse/ITSM-3226 → ITSM-3226)
@@ -73,6 +78,10 @@ async function evaluateOne(qa: GoldenQA): Promise<EvaluationRow> {
     evaluateAnswerRelevancy(qa.question, result.answer),
   ]);
 
+  const expectedDecision = qa.expectedDecision ?? null;
+  const actualDecision = result.routing.decision;
+  const routingMatch = expectedDecision === null ? null : expectedDecision === actualDecision;
+
   return {
     id: qa.id,
     question: qa.question,
@@ -86,6 +95,9 @@ async function evaluateOne(qa: GoldenQA): Promise<EvaluationRow> {
     faithfulnessReasoning: faith.reasoning,
     answerRelevancy: relevancy.score,
     answerRelevancyReasoning: relevancy.reasoning,
+    expectedDecision,
+    actualDecision,
+    routingMatch,
   };
 }
 
@@ -95,13 +107,22 @@ function recallTag(recall: number): string {
   return "PART";
 }
 
+function routingTag(row: EvaluationRow): string {
+  if (row.routingMatch === null) return "    ";
+  return row.routingMatch ? " ✓" : " ✗";
+}
+
 function printRow(row: EvaluationRow): void {
   const tag = recallTag(row.recall);
   let topDistance: string;
   if (Number.isNaN(row.topDistance)) topDistance = "n/a";
   else topDistance = row.topDistance.toFixed(3);
+  const routing =
+    row.expectedDecision === null
+      ? `route=${row.actualDecision}`
+      : `route=${row.actualDecision}${routingTag(row)} (exp=${row.expectedDecision})`;
   console.log(
-    `[${tag}] ${row.id}  recall=${row.recall.toFixed(2)}  faith=${row.faithfulness.toFixed(2)}  rel=${row.answerRelevancy.toFixed(2)}  top1_dist=${topDistance}`,
+    `[${tag}] ${row.id}  recall=${row.recall.toFixed(2)}  faith=${row.faithfulness.toFixed(2)}  rel=${row.answerRelevancy.toFixed(2)}  top1_dist=${topDistance}  ${routing}`,
   );
   console.log(`        Q: ${row.question}`);
   console.log(`        expected: [${row.expectedSources.join(", ")}]`);
@@ -117,6 +138,9 @@ function average(rows: EvaluationRow[], pick: (row: EvaluationRow) => number): n
 }
 
 function buildSummary(rows: EvaluationRow[]): Summary {
+  const scoredRows = rows.filter((row) => row.routingMatch !== null);
+  const matchedRows = scoredRows.filter((row) => row.routingMatch === true);
+  const routingAccuracy = scoredRows.length === 0 ? null : matchedRows.length / scoredRows.length;
   return {
     totalQuestions: rows.length,
     avgRecall: average(rows, (row) => row.recall),
@@ -124,17 +148,34 @@ function buildSummary(rows: EvaluationRow[]): Summary {
     avgAnswerRelevancy: average(rows, (row) => row.answerRelevancy),
     fullHits: rows.filter((row) => row.recall === 1).length,
     misses: rows.filter((row) => row.recall === 0).length,
+    routingAccuracy,
+    routingScored: scoredRows.length,
   };
 }
 
 function printSummary(summary: Summary): void {
-  const { totalQuestions, avgRecall, avgFaithfulness, avgAnswerRelevancy, fullHits, misses } =
-    summary;
+  const {
+    totalQuestions,
+    avgRecall,
+    avgFaithfulness,
+    avgAnswerRelevancy,
+    fullHits,
+    misses,
+    routingAccuracy,
+    routingScored,
+  } = summary;
   console.log(`\n총 ${totalQuestions}개`);
   console.log(`  평균 recall@5      : ${avgRecall.toFixed(3)}`);
   console.log(`  평균 faithfulness  : ${avgFaithfulness.toFixed(3)}`);
   console.log(`  평균 answer rel.   : ${avgAnswerRelevancy.toFixed(3)}`);
-  console.log(`  완전 회수: ${fullHits}/${totalQuestions}  |  완전 미스: ${misses}/${totalQuestions}\n`);
+  console.log(`  완전 회수: ${fullHits}/${totalQuestions}  |  완전 미스: ${misses}/${totalQuestions}`);
+  if (routingAccuracy === null) {
+    console.log(`  라우팅 정확도: n/a (expectedDecision 없는 QA만 있음)\n`);
+  } else {
+    console.log(
+      `  라우팅 정확도: ${routingAccuracy.toFixed(3)} (${routingScored}건 채점)\n`,
+    );
+  }
 }
 
 // 파일명용 timestamp slug — UTC 기준 yyyymmdd-hhmmss
