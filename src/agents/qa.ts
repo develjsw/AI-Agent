@@ -25,6 +25,8 @@ const DEFAULT_TOP_K = 5;
 const DEFAULT_MAX_TOKENS = 1024;
 const FETCH_K = 10;
 const RERANK_INPUT_K = 10;
+// 같은 sourceUrl(티켓 키) 청크가 top-K에 최대 N개. 큰 티켓이 top-K를 독점하는 회귀 방지
+const MAX_CHUNKS_PER_SOURCE = 2;
 
 const SYSTEM_PROMPT = `당신은 사내 지식 어시스턴트입니다. 주어진 컨텍스트를 바탕으로 질문에 정확하게 답하세요.
 - 컨텍스트는 두 종류일 수 있습니다. "종결된 작업 (RAG)"은 과거 기록이며 "실시간 상태 (MCP)"는 호출 시점의 현재 데이터입니다. 둘이 다를 경우 차이를 명시하세요.
@@ -259,15 +261,30 @@ async function retrieveRagChunks(
     model: options.model,
   });
   const rerankScoreMap = new Map(rerankResults.map((entry) => [entry.id, entry.score]));
-  const topIds = rerankInputIds
+  const sortedIds = rerankInputIds
     .slice()
-    .sort((a, b) => (rerankScoreMap.get(b) ?? 0) - (rerankScoreMap.get(a) ?? 0))
-    .slice(0, options.topK);
+    .sort((a, b) => (rerankScoreMap.get(b) ?? 0) - (rerankScoreMap.get(a) ?? 0));
 
+  // 다양성 필터: 같은 sourceUrl 청크는 MAX_CHUNKS_PER_SOURCE 까지만.
+  // 1차에서 topK 미달이면 한도 초과로 보류된 청크로 채움 (rerank 점수 순 유지)
   const topChunks: MergedChunk[] = [];
-  for (const id of topIds) {
+  const overflowChunks: MergedChunk[] = [];
+  const sourceCounts = new Map<string, number>();
+  for (const id of sortedIds) {
+    if (topChunks.length >= options.topK) break;
     const chunk = merged.get(id);
-    if (chunk) topChunks.push(chunk);
+    if (!chunk) continue;
+    const used = sourceCounts.get(chunk.sourceUrl) ?? 0;
+    if (used >= MAX_CHUNKS_PER_SOURCE) {
+      overflowChunks.push(chunk);
+      continue;
+    }
+    topChunks.push(chunk);
+    sourceCounts.set(chunk.sourceUrl, used + 1);
+  }
+  for (const chunk of overflowChunks) {
+    if (topChunks.length >= options.topK) break;
+    topChunks.push(chunk);
   }
 
   log.info(
