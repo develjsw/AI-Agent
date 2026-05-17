@@ -17,13 +17,27 @@ async function main() {
   const result = await answerQuestion(question);
 
   console.log(`\n질문: ${result.question}\n`);
+  console.log(`라우팅: ${result.routing.decision} — ${result.routing.reason}\n`);
   console.log(`답변:\n${result.answer}\n`);
-  console.log(`출처:`);
-  for (const source of result.sources) {
-    let distance: string;
-    if (Number.isNaN(source.distance)) distance = "n/a (BM25)";
-    else distance = source.distance.toFixed(3);
-    console.log(`  [${source.rank}] ${source.title} — ${source.url}  (distance=${distance})`);
+
+  if (result.sources.length > 0) {
+    console.log(`RAG 출처:`);
+    for (const source of result.sources) {
+      let distance: string;
+      if (Number.isNaN(source.distance)) distance = "n/a (BM25)";
+      else distance = source.distance.toFixed(3);
+      console.log(`  [${source.rank}] ${source.title} — ${source.url}  (distance=${distance})`);
+    }
+  }
+
+  if (result.mcpSources && result.mcpSources.length > 0) {
+    console.log(`\nMCP 출처 (실시간):`);
+    for (const summary of result.mcpSources) {
+      console.log(
+        `  ${summary.key} — ${summary.summary}  (status=${summary.status}, assignee=${summary.assignee ?? "미지정"})`,
+      );
+      console.log(`    ${summary.url}`);
+    }
   }
 }
 

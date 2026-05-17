@@ -4,17 +4,20 @@ import { ChromaVectorStore } from "@/retrieval/vector-store.js";
 import { type Bm25Index, fuseRrf, loadBm25Index } from "@/retrieval/hybrid.js";
 import { type RerankCandidate, rerankWithLlm } from "@/retrieval/rerank.js";
 
+import { type AtlassianMcpClient, createAtlassianMcpClient } from "./mcp-clients.js";
+import { type RouterDecision, type RouterResult, routeQuestion } from "./router.js";
+import { type JiraIssueSummary, getJiraIssue, summarizeJiraIssue } from "./tools/jira-issue.js";
+
 const log = child({ module: "agents.qa" });
 
 const COLLECTION_NAME = "documents";
 const DEFAULT_TOP_K = 5;
 const DEFAULT_MAX_TOKENS = 1024;
-// vector / BM25 각각 폭넓게 가져온 뒤 RRF로 좁히기
 const FETCH_K = 10;
-// RRF 융합 후 LLM rerank에 넘길 후보 개수. topK보다 넉넉히 잡아 재정렬 여지 확보
 const RERANK_INPUT_K = 10;
 
 const SYSTEM_PROMPT = `당신은 사내 지식 어시스턴트입니다. 주어진 컨텍스트를 바탕으로 질문에 정확하게 답하세요.
+- 컨텍스트는 두 종류일 수 있습니다. "종결된 작업 (RAG)"은 과거 기록이며 "실시간 상태 (MCP)"는 호출 시점의 현재 데이터입니다. 둘이 다를 경우 차이를 명시하세요.
 - 컨텍스트에 없는 내용은 추측하지 말고 "주어진 자료로는 알 수 없습니다"라고 답하세요.
 - 답변 끝에 사용한 출처 번호를 [1], [2] 형식으로 표시하세요.
 - 한국어로 답변하세요.`;
@@ -27,10 +30,17 @@ export interface AnswerSource {
   content: string;
 }
 
+export interface RoutingInfo {
+  decision: RouterDecision;
+  reason: string;
+}
+
 export interface AnswerResult {
   question: string;
   answer: string;
+  routing: RoutingInfo;
   sources: AnswerSource[];
+  mcpSources?: JiraIssueSummary[];
 }
 
 export interface AnswerOptions {
@@ -49,7 +59,6 @@ interface MergedChunk {
   content: string;
   title: string;
   sourceUrl: string;
-  // vector에서 잡힌 경우만 실제 거리, BM25만 잡힌 경우 NaN
   distance: number;
 }
 
@@ -58,12 +67,45 @@ function asString(value: unknown): string {
   return "";
 }
 
-function buildUserPrompt(question: string, chunks: MergedChunk[]): string {
-  const contexts = chunks.map(
-    (chunk, index) =>
-      `[${index + 1}] ${chunk.content}\n출처: ${chunk.title} (${chunk.sourceUrl})`,
-  );
-  return `질문: ${question}\n\n컨텍스트:\n${contexts.join("\n\n")}`;
+function formatMcpSummary(summary: JiraIssueSummary): string {
+  const parts = [
+    `${summary.key} — ${summary.summary}`,
+    `상태: ${summary.status} (${summary.statusCategory})`,
+    `유형: ${summary.issueType}`,
+    `담당자: ${summary.assignee ?? "미지정"}`,
+    `업데이트: ${summary.updated ?? "n/a"}`,
+  ];
+  if (summary.description) parts.push(`본문:\n${summary.description}`);
+  return parts.join("\n");
+}
+
+function buildUserPrompt(
+  question: string,
+  ragChunks: MergedChunk[],
+  mcpSummaries: JiraIssueSummary[],
+): string {
+  const sections: string[] = [];
+  let cite = 1;
+
+  if (ragChunks.length > 0) {
+    const blocks = ragChunks.map((chunk) => {
+      const block = `[${cite}] ${chunk.content}\n출처: ${chunk.title} (${chunk.sourceUrl})`;
+      cite += 1;
+      return block;
+    });
+    sections.push(`# 종결된 작업 (RAG)\n${blocks.join("\n\n")}`);
+  }
+
+  if (mcpSummaries.length > 0) {
+    const blocks = mcpSummaries.map((summary) => {
+      const block = `[${cite}] ${formatMcpSummary(summary)}\n출처: ${summary.url}`;
+      cite += 1;
+      return block;
+    });
+    sections.push(`# 실시간 상태 (MCP)\n${blocks.join("\n\n")}`);
+  }
+
+  return `질문: ${question}\n\n${sections.join("\n\n")}`;
 }
 
 interface OpenAIChatResponse {
@@ -115,7 +157,6 @@ async function generateAnswer(
   }
 }
 
-// BM25 인덱스는 한 번 빌드해 모듈 레벨 캐시 (eval 다회 호출 시 오버헤드 제거)
 let cachedBm25Index: Bm25Index | null = null;
 
 async function getBm25Index(): Promise<Bm25Index> {
@@ -124,15 +165,19 @@ async function getBm25Index(): Promise<Bm25Index> {
   return cachedBm25Index;
 }
 
-export async function answerQuestion(
-  question: string,
-  options: AnswerOptions = {},
-): Promise<AnswerResult> {
-  const config = loadConfig();
-  const topK = options.topK ?? DEFAULT_TOP_K;
-  const model = options.model ?? config.CHAT_MODEL;
-  const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
+let cachedMcpClient: AtlassianMcpClient | null = null;
 
+async function getMcpClient(): Promise<AtlassianMcpClient> {
+  if (cachedMcpClient) return cachedMcpClient;
+  cachedMcpClient = await createAtlassianMcpClient();
+  return cachedMcpClient;
+}
+
+async function retrieveRagChunks(
+  question: string,
+  config: Config,
+  options: { topK: number; model: string },
+): Promise<MergedChunk[]> {
   const [questionEmbedding] = await embedTexts([question]);
   if (!questionEmbedding) throw new Error("failed to embed question");
 
@@ -148,7 +193,6 @@ export async function answerQuestion(
   ]);
   const bm25Results = bm25Index.search(question, FETCH_K);
 
-  // chunk id 합집합으로 메타 정보 모음
   const merged = new Map<string, MergedChunk>();
   for (const result of vectorResults) {
     merged.set(result.id, {
@@ -170,7 +214,6 @@ export async function answerQuestion(
     });
   }
 
-  // RRF 점수로 두 ranking 결합 → rerank 후보 풀(topK보다 넓게)
   const fusedScores = fuseRrf([
     vectorResults.map((result, i) => ({ id: result.id, rank: i + 1 })),
     bm25Results.map((result, i) => ({ id: result.id, rank: i + 1 })),
@@ -188,13 +231,14 @@ export async function answerQuestion(
     }
   }
 
-  // LLM rerank로 점수화 → 내림차순 정렬, 동점은 RRF 순서 유지
-  const rerankResults = await rerankWithLlm(config, question, rerankCandidates, { model });
+  const rerankResults = await rerankWithLlm(config, question, rerankCandidates, {
+    model: options.model,
+  });
   const rerankScoreMap = new Map(rerankResults.map((entry) => [entry.id, entry.score]));
   const topIds = rerankInputIds
     .slice()
     .sort((a, b) => (rerankScoreMap.get(b) ?? 0) - (rerankScoreMap.get(a) ?? 0))
-    .slice(0, topK);
+    .slice(0, options.topK);
 
   const topChunks: MergedChunk[] = [];
   for (const id of topIds) {
@@ -204,7 +248,7 @@ export async function answerQuestion(
 
   log.info(
     {
-      topK,
+      topK: options.topK,
       retrieved: topChunks.length,
       vectorCount: vectorResults.length,
       bm25Count: bm25Results.length,
@@ -213,14 +257,46 @@ export async function answerQuestion(
     "hybrid + rerank retrieved",
   );
 
+  return topChunks;
+}
+
+async function fetchMcpSummary(routing: RouterResult): Promise<JiraIssueSummary | undefined> {
+  if (!routing.mcpAction) return undefined;
+  const mcp = await getMcpClient();
+  const raw = await getJiraIssue(mcp.client, routing.mcpAction.args.key);
+  return summarizeJiraIssue(raw);
+}
+
+export async function answerQuestion(
+  question: string,
+  options: AnswerOptions = {},
+): Promise<AnswerResult> {
+  const config = loadConfig();
+  const topK = options.topK ?? DEFAULT_TOP_K;
+  const model = options.model ?? config.CHAT_MODEL;
+  const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
+
+  const routing = await routeQuestion(config, question, { model });
+
+  const needMcp = !!routing.mcpAction;
+  // MCP 단독으로 결정됐지만 키가 없으면 RAG로 폴백. HYBRID + 키 없음도 RAG-only로 자연스럽게 처리됨
+  const needRag = routing.decision !== "MCP" || !needMcp;
+
+  const [ragChunks, mcpSummary] = await Promise.all([
+    needRag ? retrieveRagChunks(question, config, { topK, model }) : Promise.resolve([]),
+    needMcp ? fetchMcpSummary(routing) : Promise.resolve(undefined),
+  ]);
+
+  const mcpSummaries = mcpSummary ? [mcpSummary] : [];
+
   const answer = await generateAnswer(
     config,
     SYSTEM_PROMPT,
-    buildUserPrompt(question, topChunks),
+    buildUserPrompt(question, ragChunks, mcpSummaries),
     { model, maxTokens },
   );
 
-  const sources: AnswerSource[] = topChunks.map((chunk, index) => ({
+  const sources: AnswerSource[] = ragChunks.map((chunk, index) => ({
     rank: index + 1,
     title: chunk.title,
     url: chunk.sourceUrl,
@@ -228,5 +304,11 @@ export async function answerQuestion(
     content: chunk.content,
   }));
 
-  return { question, answer, sources };
+  return {
+    question,
+    answer,
+    routing: { decision: routing.decision, reason: routing.reason },
+    sources,
+    ...(mcpSummaries.length > 0 ? { mcpSources: mcpSummaries } : {}),
+  };
 }
