@@ -1,19 +1,38 @@
-# 골든 Q&A 평가셋 — RAG 검색·답변 품질 측정용 (사용자가 채워나가는 핵심 자산)
+# 골든 Q&A 평가셋 — RAG/MCP 검색·답변 품질 측정용 (사용자가 채워나가는 핵심 자산)
 # 형식: src/shared/schema.ts 의 GoldenQA[]
 #
 # 작성 가이드:
 #   - 목표: 30개 이상 (MVP 평가 기준)
-#   - 시간 의존 표현(최근/지난주/오늘) 회피 — RAG 한계, MCP 라우터에서 보완 예정
-#   - 의미 기반 질문 권장: "어떻게 처리했지?", "왜 이렇게 결정했지?"
-#   - 작성 절차: ① 본문 보고 질문 발상 → ② `pnpm qa "..."` 로 top-5 검증 → ③ 잡히는 것만 추가
+#   - 시간 의존 표현(최근/지난주/오늘)이 핵심인 질문은 MCP 라우터에서 보완 (expectedDecision: "MCP")
+#   - 정적 의미 기반 질문은 RAG (expectedDecision 생략 또는 "RAG")
+#   - 작성 절차: ① 본문 보고 질문 발상 → ② `pnpm qa "..."` 로 top-5 + 라우팅 검증 → ③ 잡히는 것만 추가
 #   - tags 로 분류 시 평가에서 카테고리별 점수 분리 가능
+#   - expectedDecision 생략 시 라우팅 정확도 채점 제외 (n/a)
 #
-# 형식 예시:
+# RAG 예시:
 # - id: q-001
 #   question: "신규 직원 온보딩 절차 어디서 확인할 수 있어?"
 #   expectedAnswerSummary: "Confluence HR 공간의 '신규입사자 가이드' 페이지 참조"
 #   expectedSources:
-#     - ITSM-1234   # Jira 키 형식 (현재 run.ts 비교 기준)
+#     - ITSM-1234           # Jira 키 형식 (현재 run.ts 비교 기준)
+#   expectedDecision: "RAG"
 #   tags: [onboarding, hr]
+#
+# MCP 예시 (Jira 단건 조회):
+# - id: q-016
+#   question: "지금 ITSM-1234 상태가 뭐야?"
+#   expectedAnswerSummary: "ITSM-1234은 작업 완료 상태"
+#   expectedSources: []     # MCP 단건 조회라 RAG retrieval 미사용 → 빈 배열로 두면 recall 자동 1.0
+#   expectedDecision: "MCP"
+#   tags: [mcp, jira]
+#
+# HYBRID 예시 (과거 컨텍스트 + 현재 상태):
+# - id: q-017
+#   question: "ITSM-1234 작업 마무리됐고 후속 변경 있어?"
+#   expectedAnswerSummary: "본문에 적힌 결정사항 + 현재 status"
+#   expectedSources:
+#     - ITSM-1234
+#   expectedDecision: "HYBRID"
+#   tags: [hybrid]
 
 []
