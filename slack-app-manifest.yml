@@ -1,0 +1,26 @@
+display_information:
+  name: AI Agent Internal Knowledge
+  description: 사내 지식 어시스턴트 RAG/MCP 학습용 클라이언트
+  background_color: "#0a0a0a"
+
+oauth_config:
+  redirect_urls:
+    - http://localhost:13124/callback
+  scopes:
+    user:
+      - search:read.public
+      - search:read.private
+      - search:read.mpim
+      - search:read.im
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+      - channels:read
+      - groups:read
+      - users:read
+
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

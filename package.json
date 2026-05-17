@@ -17,6 +17,8 @@
     "router": "tsx --env-file=.env src/agents/cli/router.ts",
     "mcp:tools": "tsx --env-file=.env src/agents/cli/mcp-tools.ts",
     "mcp:issue": "tsx --env-file=.env src/agents/cli/mcp-issue.ts",
+    "mcp:slack:tools": "tsx --env-file=.env src/agents/cli/mcp-slack-tools.ts",
+    "mcp:slack:search": "tsx --env-file=.env src/agents/cli/mcp-slack-search.ts",
     "tickets": "tsx --env-file=.env src/evaluation/list-tickets.ts",
     "eval": "tsx --env-file=.env src/evaluation/run.ts",
     "chroma:up": "docker compose up -d chroma",

@@ -15,6 +15,10 @@ const ConfigSchema = z.object({
   ATLASSIAN_SITE: z.string().min(1).optional(),
   ATLASSIAN_EMAIL: z.string().email().optional(),
   ATLASSIAN_API_TOKEN: z.string().min(1).optional(),
+
+  // Slack MCP (공식 Remote MCP confidential OAuth client)
+  SLACK_CLIENT_ID: z.string().min(1).optional(),
+  SLACK_CLIENT_SECRET: z.string().min(1).optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

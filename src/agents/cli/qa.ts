@@ -30,14 +30,20 @@ async function main() {
     }
   }
 
-  if (result.mcpSources && result.mcpSources.length > 0) {
-    console.log(`\nMCP 출처 (실시간):`);
-    for (const summary of result.mcpSources) {
-      console.log(
-        `  ${summary.key} — ${summary.summary}  (status=${summary.status}, assignee=${summary.assignee ?? "미지정"})`,
-      );
-      console.log(`    ${summary.url}`);
-    }
+  if (result.mcpJira) {
+    const jira = result.mcpJira;
+    console.log(`\nMCP Jira 티켓 (실시간):`);
+    console.log(
+      `  ${jira.key} — ${jira.summary}  (status=${jira.status}, assignee=${jira.assignee ?? "미지정"})`,
+    );
+    console.log(`    ${jira.url}`);
+  }
+
+  if (result.mcpSlack) {
+    const slack = result.mcpSlack;
+    console.log(
+      `\nMCP Slack 검색 (실시간): "${slack.query}" — ${slack.resultCount}건  (다음 cursor: ${slack.nextCursor ?? "끝"})`,
+    );
   }
 }
 

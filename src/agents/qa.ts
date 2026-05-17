@@ -5,12 +5,18 @@ import { type Bm25Index, fuseRrf, loadBm25Index } from "@/retrieval/hybrid.js";
 import { type RerankCandidate, rerankWithLlm } from "@/retrieval/rerank.js";
 
 import { type AtlassianClient, createAtlassianClient } from "./mcp/atlassian-client.js";
+import { type SlackClient, createSlackClient } from "./mcp/slack-client.js";
 import { type RouterDecision, type RouterResult, routeQuestion } from "./router.js";
 import {
   type JiraIssueSummary,
   getJiraIssue,
   summarizeJiraIssue,
 } from "./mcp/tools/jira-issue.js";
+import {
+  type SlackSearchSummary,
+  searchSlack,
+  summarizeSlackSearch,
+} from "./mcp/tools/slack-search.js";
 
 const log = child({ module: "agents.qa" });
 
@@ -44,7 +50,8 @@ export interface AnswerResult {
   answer: string;
   routing: RoutingInfo;
   sources: AnswerSource[];
-  mcpSources?: JiraIssueSummary[];
+  mcpJira?: JiraIssueSummary;
+  mcpSlack?: SlackSearchSummary;
 }
 
 export interface AnswerOptions {
@@ -71,7 +78,7 @@ function asString(value: unknown): string {
   return "";
 }
 
-function formatMcpSummary(summary: JiraIssueSummary): string {
+function formatJiraSummary(summary: JiraIssueSummary): string {
   const parts = [
     `${summary.key} — ${summary.summary}`,
     `상태: ${summary.status} (${summary.statusCategory})`,
@@ -86,7 +93,8 @@ function formatMcpSummary(summary: JiraIssueSummary): string {
 function buildUserPrompt(
   question: string,
   ragChunks: MergedChunk[],
-  mcpSummaries: JiraIssueSummary[],
+  jiraSummary: JiraIssueSummary | undefined,
+  slackSummary: SlackSearchSummary | undefined,
 ): string {
   const sections: string[] = [];
   let cite = 1;
@@ -100,13 +108,18 @@ function buildUserPrompt(
     sections.push(`# 종결된 작업 (RAG)\n${blocks.join("\n\n")}`);
   }
 
-  if (mcpSummaries.length > 0) {
-    const blocks = mcpSummaries.map((summary) => {
-      const block = `[${cite}] ${formatMcpSummary(summary)}\n출처: ${summary.url}`;
-      cite += 1;
-      return block;
-    });
-    sections.push(`# 실시간 상태 (MCP)\n${blocks.join("\n\n")}`);
+  if (jiraSummary) {
+    sections.push(
+      `# 실시간 Jira 티켓 (MCP)\n[${cite}] ${formatJiraSummary(jiraSummary)}\n출처: ${jiraSummary.url}`,
+    );
+    cite += 1;
+  }
+
+  if (slackSummary && slackSummary.resultCount > 0) {
+    sections.push(
+      `# 실시간 Slack 검색 (MCP)\n[${cite}] Slack에서 "${slackSummary.query}" 검색 결과 ${slackSummary.resultCount}건\n${slackSummary.markdown}`,
+    );
+    cite += 1;
   }
 
   return `질문: ${question}\n\n${sections.join("\n\n")}`;
@@ -169,12 +182,19 @@ async function getBm25Index(): Promise<Bm25Index> {
   return cachedBm25Index;
 }
 
-let cachedMcpClient: AtlassianClient | null = null;
+let cachedAtlassianClient: AtlassianClient | null = null;
+let cachedSlackClient: SlackClient | null = null;
 
-async function getMcpClient(): Promise<AtlassianClient> {
-  if (cachedMcpClient) return cachedMcpClient;
-  cachedMcpClient = await createAtlassianClient();
-  return cachedMcpClient;
+async function getAtlassianClient(): Promise<AtlassianClient> {
+  if (cachedAtlassianClient) return cachedAtlassianClient;
+  cachedAtlassianClient = await createAtlassianClient();
+  return cachedAtlassianClient;
+}
+
+async function getSlackClient(config: Config): Promise<SlackClient> {
+  if (cachedSlackClient) return cachedSlackClient;
+  cachedSlackClient = await createSlackClient(config);
+  return cachedSlackClient;
 }
 
 async function retrieveRagChunks(
@@ -264,11 +284,25 @@ async function retrieveRagChunks(
   return topChunks;
 }
 
-async function fetchMcpSummary(routing: RouterResult): Promise<JiraIssueSummary | undefined> {
-  if (!routing.mcpAction) return undefined;
-  const mcp = await getMcpClient();
-  const raw = await getJiraIssue(mcp.client, routing.mcpAction.args.key);
-  return summarizeJiraIssue(raw);
+interface McpFetchResult {
+  jira?: JiraIssueSummary;
+  slack?: SlackSearchSummary;
+}
+
+async function fetchMcpResult(routing: RouterResult, config: Config): Promise<McpFetchResult> {
+  if (!routing.mcpAction) return {};
+  switch (routing.mcpAction.tool) {
+    case "getJiraIssue": {
+      const atlassian = await getAtlassianClient();
+      const raw = await getJiraIssue(atlassian.client, routing.mcpAction.args.key);
+      return { jira: summarizeJiraIssue(raw) };
+    }
+    case "searchSlack": {
+      const slack = await getSlackClient(config);
+      const raw = await searchSlack(slack.client, routing.mcpAction.args.query);
+      return { slack: summarizeSlackSearch(raw) };
+    }
+  }
 }
 
 export async function answerQuestion(
@@ -283,20 +317,18 @@ export async function answerQuestion(
   const routing = await routeQuestion(config, question, { model });
 
   const needMcp = !!routing.mcpAction;
-  // MCP 단독으로 결정됐지만 키가 없으면 RAG로 폴백. HYBRID + 키 없음도 RAG-only로 자연스럽게 처리됨
+  // MCP 단독 결정이지만 도구 인자가 비어 mcpAction이 없으면 RAG로 폴백. HYBRID + 인자 없음도 동일
   const needRag = routing.decision !== "MCP" || !needMcp;
 
-  const [ragChunks, mcpSummary] = await Promise.all([
+  const [ragChunks, mcpResult] = await Promise.all([
     needRag ? retrieveRagChunks(question, config, { topK, model }) : Promise.resolve([]),
-    needMcp ? fetchMcpSummary(routing) : Promise.resolve(undefined),
+    needMcp ? fetchMcpResult(routing, config) : Promise.resolve<McpFetchResult>({}),
   ]);
-
-  const mcpSummaries = mcpSummary ? [mcpSummary] : [];
 
   const answer = await generateAnswer(
     config,
     SYSTEM_PROMPT,
-    buildUserPrompt(question, ragChunks, mcpSummaries),
+    buildUserPrompt(question, ragChunks, mcpResult.jira, mcpResult.slack),
     { model, maxTokens },
   );
 
@@ -313,6 +345,7 @@ export async function answerQuestion(
     answer,
     routing: { decision: routing.decision, reason: routing.reason },
     sources,
-    ...(mcpSummaries.length > 0 ? { mcpSources: mcpSummaries } : {}),
+    ...(mcpResult.jira ? { mcpJira: mcpResult.jira } : {}),
+    ...(mcpResult.slack ? { mcpSlack: mcpResult.slack } : {}),
   };
 }
