@@ -4,7 +4,7 @@ import { z } from "zod";
 import yaml from "yaml";
 
 import { GoldenQA, type RouterDecisionLabel, child, loadConfig } from "@/shared/index.js";
-import { answerQuestion } from "@/agents/qa.js";
+import { answerQuestion } from "@/agents/graph.js";
 import { evaluateAnswerRelevancy, evaluateFaithfulness } from "@/evaluation/judge.js";
 
 const log = child({ module: "evaluation" });

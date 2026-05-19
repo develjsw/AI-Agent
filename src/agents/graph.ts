@@ -1,3 +1,5 @@
+import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+
 import { type Config, child, loadConfig } from "@/shared/index.js";
 import { embedTexts } from "@/ingestion/embed.js";
 import { ChromaVectorStore } from "@/retrieval/vector-store.js";
@@ -18,7 +20,7 @@ import {
   summarizeSlackSearch,
 } from "./mcp/tools/slack-search.js";
 
-const log = child({ module: "agents.qa" });
+const log = child({ module: "agents.graph" });
 
 const COLLECTION_NAME = "documents";
 const DEFAULT_TOP_K = 5;
@@ -62,6 +64,12 @@ export interface AnswerOptions {
   maxTokens?: number;
 }
 
+interface RuntimeOptions {
+  topK: number;
+  model: string;
+  maxTokens: number;
+}
+
 interface GenerateOptions {
   model: string;
   maxTokens: number;
@@ -95,8 +103,8 @@ function formatJiraSummary(summary: JiraIssueSummary): string {
 function buildUserPrompt(
   question: string,
   ragChunks: MergedChunk[],
-  jiraSummary: JiraIssueSummary | undefined,
-  slackSummary: SlackSearchSummary | undefined,
+  jiraSummary: JiraIssueSummary | null,
+  slackSummary: SlackSearchSummary | null,
 ): string {
   const sections: string[] = [];
   let cite = 1;
@@ -162,7 +170,7 @@ async function generateAnswerOpenAI(
   return payload.choices[0]?.message.content ?? "";
 }
 
-async function generateAnswer(
+async function generateAnswerImpl(
   config: Config,
   systemPrompt: string,
   userPrompt: string,
@@ -202,7 +210,7 @@ async function getSlackClient(config: Config): Promise<SlackClient> {
 async function retrieveRagChunks(
   question: string,
   config: Config,
-  options: { topK: number; model: string },
+  options: RuntimeOptions,
 ): Promise<MergedChunk[]> {
   const [questionEmbedding] = await embedTexts([question]);
   if (!questionEmbedding) throw new Error("failed to embed question");
@@ -301,55 +309,147 @@ async function retrieveRagChunks(
   return topChunks;
 }
 
-interface McpFetchResult {
-  jira?: JiraIssueSummary;
-  slack?: SlackSearchSummary;
+// ──────────────────────────────────────────────────────────
+// LangGraph StateGraph 정의
+// ──────────────────────────────────────────────────────────
+
+const StateAnnotation = Annotation.Root({
+  question: Annotation<string>(),
+  options: Annotation<RuntimeOptions>(),
+  routing: Annotation<RouterResult | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
+  }),
+  ragChunks: Annotation<MergedChunk[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+  mcpJira: Annotation<JiraIssueSummary | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
+  }),
+  mcpSlack: Annotation<SlackSearchSummary | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
+  }),
+  answer: Annotation<string>({
+    reducer: (_prev, next) => next,
+    default: () => "",
+  }),
+});
+
+type GraphState = typeof StateAnnotation.State;
+type GraphUpdate = Partial<typeof StateAnnotation.Update>;
+
+const NODE = {
+  route: "route",
+  retrieveRag: "retrieve_rag",
+  fetchJira: "fetch_mcp_jira",
+  fetchSlack: "fetch_mcp_slack",
+  generate: "generate_answer",
+} as const;
+
+async function routeNode(state: GraphState): Promise<GraphUpdate> {
+  const config = loadConfig();
+  const routing = await routeQuestion(config, state.question, { model: state.options.model });
+  return { routing };
 }
 
-async function fetchMcpResult(routing: RouterResult, config: Config): Promise<McpFetchResult> {
-  if (!routing.mcpAction) return {};
-  switch (routing.mcpAction.tool) {
-    case "getJiraIssue": {
-      const atlassian = await getAtlassianClient();
-      const raw = await getJiraIssue(atlassian.client, routing.mcpAction.args.key);
-      return { jira: summarizeJiraIssue(raw) };
-    }
-    case "searchSlack": {
-      const slack = await getSlackClient(config);
-      const raw = await searchSlack(slack.client, routing.mcpAction.args.query);
-      return { slack: summarizeSlackSearch(raw) };
-    }
-  }
+async function retrieveRagNode(state: GraphState): Promise<GraphUpdate> {
+  const config = loadConfig();
+  const ragChunks = await retrieveRagChunks(state.question, config, state.options);
+  return { ragChunks };
 }
+
+async function fetchJiraNode(state: GraphState): Promise<GraphUpdate> {
+  const action = state.routing?.mcpAction;
+  if (!action || action.tool !== "getJiraIssue") return {};
+  const atlassian = await getAtlassianClient();
+  const raw = await getJiraIssue(atlassian.client, action.args.key);
+  return { mcpJira: summarizeJiraIssue(raw) };
+}
+
+async function fetchSlackNode(state: GraphState): Promise<GraphUpdate> {
+  const action = state.routing?.mcpAction;
+  if (!action || action.tool !== "searchSlack") return {};
+  const config = loadConfig();
+  const slack = await getSlackClient(config);
+  const raw = await searchSlack(slack.client, action.args.query);
+  return { mcpSlack: summarizeSlackSearch(raw) };
+}
+
+async function generateAnswerNode(state: GraphState): Promise<GraphUpdate> {
+  const config = loadConfig();
+  const userPrompt = buildUserPrompt(
+    state.question,
+    state.ragChunks,
+    state.mcpJira,
+    state.mcpSlack,
+  );
+  const answer = await generateAnswerImpl(config, SYSTEM_PROMPT, userPrompt, {
+    model: state.options.model,
+    maxTokens: state.options.maxTokens,
+  });
+  return { answer };
+}
+
+// route 결정에 따라 다음에 실행할 노드들을 배열로 반환 (병렬 fan-out)
+function routeDispatch(state: GraphState): string[] {
+  const routing = state.routing;
+  if (!routing) return [END];
+
+  const needMcp = !!routing.mcpAction;
+  // MCP 단독 결정이지만 도구 인자가 비어 mcpAction이 없으면 RAG로 폴백. HYBRID + 인자 없음도 동일
+  const needRag = routing.decision !== "MCP" || !needMcp;
+
+  const targets: string[] = [];
+  if (needRag) targets.push(NODE.retrieveRag);
+  if (needMcp && routing.mcpAction?.tool === "getJiraIssue") targets.push(NODE.fetchJira);
+  if (needMcp && routing.mcpAction?.tool === "searchSlack") targets.push(NODE.fetchSlack);
+
+  // 안전망: 위 조건 어디에도 안 잡히면 RAG로 폴백
+  if (targets.length === 0) targets.push(NODE.retrieveRag);
+  return targets;
+}
+
+const compiledGraph = new StateGraph(StateAnnotation)
+  .addNode(NODE.route, routeNode)
+  .addNode(NODE.retrieveRag, retrieveRagNode)
+  .addNode(NODE.fetchJira, fetchJiraNode)
+  .addNode(NODE.fetchSlack, fetchSlackNode)
+  .addNode(NODE.generate, generateAnswerNode)
+  .addEdge(START, NODE.route)
+  .addConditionalEdges(NODE.route, routeDispatch, [
+    NODE.retrieveRag,
+    NODE.fetchJira,
+    NODE.fetchSlack,
+  ])
+  .addEdge(NODE.retrieveRag, NODE.generate)
+  .addEdge(NODE.fetchJira, NODE.generate)
+  .addEdge(NODE.fetchSlack, NODE.generate)
+  .addEdge(NODE.generate, END)
+  .compile();
 
 export async function answerQuestion(
   question: string,
   options: AnswerOptions = {},
 ): Promise<AnswerResult> {
   const config = loadConfig();
-  const topK = options.topK ?? DEFAULT_TOP_K;
-  const model = options.model ?? config.CHAT_MODEL;
-  const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
+  const runtimeOptions: RuntimeOptions = {
+    topK: options.topK ?? DEFAULT_TOP_K,
+    model: options.model ?? config.CHAT_MODEL,
+    maxTokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
+  };
 
-  const routing = await routeQuestion(config, question, { model });
+  const finalState = await compiledGraph.invoke({
+    question,
+    options: runtimeOptions,
+  });
 
-  const needMcp = !!routing.mcpAction;
-  // MCP 단독 결정이지만 도구 인자가 비어 mcpAction이 없으면 RAG로 폴백. HYBRID + 인자 없음도 동일
-  const needRag = routing.decision !== "MCP" || !needMcp;
+  const routing = finalState.routing;
+  if (!routing) throw new Error("graph completed without routing decision");
 
-  const [ragChunks, mcpResult] = await Promise.all([
-    needRag ? retrieveRagChunks(question, config, { topK, model }) : Promise.resolve([]),
-    needMcp ? fetchMcpResult(routing, config) : Promise.resolve<McpFetchResult>({}),
-  ]);
-
-  const answer = await generateAnswer(
-    config,
-    SYSTEM_PROMPT,
-    buildUserPrompt(question, ragChunks, mcpResult.jira, mcpResult.slack),
-    { model, maxTokens },
-  );
-
-  const sources: AnswerSource[] = ragChunks.map((chunk, index) => ({
+  const sources: AnswerSource[] = finalState.ragChunks.map((chunk, index) => ({
     rank: index + 1,
     title: chunk.title,
     url: chunk.sourceUrl,
@@ -357,12 +457,13 @@ export async function answerQuestion(
     content: chunk.content,
   }));
 
-  return {
+  const result: AnswerResult = {
     question,
-    answer,
+    answer: finalState.answer,
     routing: { decision: routing.decision, reason: routing.reason },
     sources,
-    ...(mcpResult.jira ? { mcpJira: mcpResult.jira } : {}),
-    ...(mcpResult.slack ? { mcpSlack: mcpResult.slack } : {}),
   };
+  if (finalState.mcpJira) result.mcpJira = finalState.mcpJira;
+  if (finalState.mcpSlack) result.mcpSlack = finalState.mcpSlack;
+  return result;
 }

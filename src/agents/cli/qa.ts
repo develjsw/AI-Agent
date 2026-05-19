@@ -1,5 +1,5 @@
 import { child, loadConfig } from "@/shared/index.js";
-import { answerQuestion } from "@/agents/qa.js";
+import { answerQuestion } from "@/agents/graph.js";
 
 const log = child({ module: "qa-cli" });
 
