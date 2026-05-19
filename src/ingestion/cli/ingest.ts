@@ -6,6 +6,11 @@ import {
   issueToDocument,
   loadJiraEnv,
 } from "@/ingestion/sources/jira.js";
+import {
+  ConfluenceClient,
+  loadConfluenceEnv,
+  pageToDocument,
+} from "@/ingestion/sources/confluence.js";
 
 const log = child({ module: "ingestion" });
 
@@ -15,8 +20,10 @@ function usage(): never {
   log.error(
     [
       "usage:",
-      "  pnpm ingest jira issue <KEY>           # e.g., ITSM-7573",
-      "  pnpm ingest jira search '<JQL>'        # e.g., 'project = ITSM AND statusCategory = Done'",
+      "  pnpm ingest jira issue <KEY>                 # e.g., ITSM-7573",
+      "  pnpm ingest jira search '<JQL>'              # e.g., 'project = ITSM AND statusCategory = Done'",
+      "  pnpm ingest confluence page <PAGE_ID>        # e.g., 1234567890",
+      "  pnpm ingest confluence space <SPACE_KEY>     # 스페이스 내 모든 페이지",
     ].join("\n"),
   );
   process.exit(1);
@@ -81,6 +88,61 @@ async function ingestJira(args: string[]): Promise<void> {
   }
 }
 
+async function ingestConfluencePage(client: ConfluenceClient, pageId: string): Promise<void> {
+  log.info({ pageId }, "fetching confluence page");
+  const page = await client.getPage(pageId);
+  const document = pageToDocument(page, client.site);
+  const filePath = await saveDocument(document, "confluence");
+  log.info(
+    {
+      pageId,
+      title: document.title,
+      contentChars: document.content.length,
+      bodyChars: document.metadata.bodyChars,
+      spaceKey: document.permissions.spaceKey,
+      filePath,
+    },
+    "saved",
+  );
+}
+
+async function ingestConfluenceSpace(client: ConfluenceClient, spaceKey: string): Promise<void> {
+  log.info({ spaceKey }, "resolving space");
+  const space = await client.getSpaceByKey(spaceKey);
+  log.info({ spaceKey, spaceId: space.id, name: space.name }, "space resolved, listing pages");
+
+  let count = 0;
+  for await (const page of client.listPagesInSpace(space.id)) {
+    const document = pageToDocument(page, client.site);
+    await saveDocument(document, "confluence");
+    count += 1;
+    if (count % 10 === 0) log.info({ count }, "ingested");
+  }
+  log.info({ count, spaceKey }, "space ingestion complete");
+}
+
+async function ingestConfluence(args: string[]): Promise<void> {
+  const client = new ConfluenceClient(loadConfluenceEnv());
+
+  const [mode, ...rest] = args;
+  switch (mode) {
+    case "page": {
+      const pageId = rest[0];
+      if (!pageId) usage();
+      await ingestConfluencePage(client, pageId);
+      return;
+    }
+    case "space": {
+      const spaceKey = rest[0];
+      if (!spaceKey) usage();
+      await ingestConfluenceSpace(client, spaceKey);
+      return;
+    }
+    default:
+      usage();
+  }
+}
+
 async function main() {
   loadConfig();
   const [, , source, ...args] = process.argv;
@@ -90,8 +152,11 @@ async function main() {
     case "jira":
       await ingestJira(args);
       return;
+    case "confluence":
+      await ingestConfluence(args);
+      return;
     default:
-      log.error({ source }, "unknown source — supported: jira");
+      log.error({ source }, "unknown source — supported: jira, confluence");
       process.exit(1);
   }
 }

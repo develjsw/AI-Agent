@@ -49,12 +49,20 @@ interface EvaluationRow {
   routingMatch: boolean | null;
 }
 
-// Jira 이슈 URL에서 키 추출 (예: .../browse/ITSM-3226 → ITSM-3226)
-function extractJiraKey(url: string): string {
-  const match = url.match(/\/browse\/([^/?#]+)/);
-  const key = match?.[1];
-  if (!key) throw new Error(`Jira URL 패턴 불일치: ${url}`);
-  return key;
+// 소스 URL에서 식별자 추출
+// - Jira: .../browse/ITSM-3226 → ITSM-3226
+// - Confluence: .../wiki/spaces/PROD/pages/12345/Title → 12345
+function extractSourceKey(url: string): string {
+  const jira = url.match(/\/browse\/([^/?#]+)/);
+  if (jira?.[1]) return jira[1];
+
+  const confluence = url.match(/\/wiki\/spaces\/[^/]+\/pages\/([^/?#]+)/);
+  if (confluence?.[1]) return confluence[1];
+
+  const confluenceFallback = url.match(/pageId=([^&]+)/);
+  if (confluenceFallback?.[1]) return confluenceFallback[1];
+
+  throw new Error(`알 수 없는 소스 URL 패턴: ${url}`);
 }
 
 function loadGoldenSet(): GoldenQA[] {
@@ -65,7 +73,7 @@ function loadGoldenSet(): GoldenQA[] {
 
 async function evaluateOne(qa: GoldenQA): Promise<EvaluationRow> {
   const result = await answerQuestion(qa.question);
-  const retrievedSources = result.sources.map((source) => extractJiraKey(source.url));
+  const retrievedSources = result.sources.map((source) => extractSourceKey(source.url));
   const retrievedSet = new Set(retrievedSources);
   const hits = qa.expectedSources.filter((key) => retrievedSet.has(key));
   const recall = qa.expectedSources.length === 0 ? 1 : hits.length / qa.expectedSources.length;

@@ -9,14 +9,23 @@
 #   - tags 로 분류 시 평가에서 카테고리별 점수 분리 가능
 #   - expectedDecision 생략 시 라우팅 정확도 채점 제외 (n/a)
 #
-# RAG 예시:
+# RAG 예시 (Jira):
 # - id: q-001
 #   question: "신규 직원 온보딩 절차 어디서 확인할 수 있어?"
 #   expectedAnswerSummary: "Confluence HR 공간의 '신규입사자 가이드' 페이지 참조"
 #   expectedSources:
-#     - ITSM-1234           # Jira 키 형식 (현재 run.ts 비교 기준)
+#     - ITSM-1234           # Jira 키 (run.ts가 /browse/{KEY}에서 추출)
 #   expectedDecision: "RAG"
 #   tags: [onboarding, hr]
+#
+# RAG 예시 (Confluence):
+# - id: q-018
+#   question: "결제 시스템 아키텍처 도식 어디 있어?"
+#   expectedAnswerSummary: "Confluence Engineering 스페이스의 '결제 모듈 구조' 페이지"
+#   expectedSources:
+#     - "1234567890"        # Confluence pageId (run.ts가 /pages/{ID}에서 추출)
+#   expectedDecision: "RAG"
+#   tags: [confluence, architecture]
 #
 # MCP 예시 (Jira 단건 조회):
 # - id: q-016

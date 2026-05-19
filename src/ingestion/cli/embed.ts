@@ -10,7 +10,13 @@ const CHUNKED_DIR = resolve(process.cwd(), "data/chunked");
 const COLLECTION_NAME = "documents";
 
 function usage(): never {
-  log.error("usage: pnpm embed jira");
+  log.error(
+    [
+      "usage:",
+      "  pnpm embed jira",
+      "  pnpm embed confluence",
+    ].join("\n"),
+  );
   process.exit(1);
 }
 
@@ -28,6 +34,7 @@ function flattenMetadata(chunk: Chunk): Record<string, string | number | boolean
     updatedAt: metadata.updatedAt.toISOString(),
     permissionsPublic: metadata.permissions.public,
     permissionsProjectKey: metadata.permissions.projectKey ?? "",
+    permissionsSpaceKey: metadata.permissions.spaceKey ?? "",
   };
 }
 
@@ -80,8 +87,11 @@ async function main() {
     case "jira":
       await embedSource("jira");
       return;
+    case "confluence":
+      await embedSource("confluence");
+      return;
     default:
-      log.error({ source }, "unknown source — supported: jira");
+      log.error({ source }, "unknown source — supported: jira, confluence");
       process.exit(1);
   }
 }

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { Chunk } from "@/shared/schema.js";
@@ -103,19 +103,41 @@ export class Bm25Index {
   }
 }
 
-// JSONL 청크 파일을 BM25 인덱스로 빌드
-export async function loadBm25Index(source = "jira"): Promise<Bm25Index> {
-  const path = resolve(CHUNKED_DIR, `${source}.jsonl`);
-  const raw = await readFile(path, "utf8");
-  const lines = raw.split("\n").filter((line) => line.trim().length > 0);
-
-  const index = new Bm25Index();
-  for (const line of lines) {
-    const chunk = Chunk.parse(JSON.parse(line));
-    index.add(chunk.id, chunk.content, chunk.metadata);
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
   }
+}
+
+// 여러 소스의 JSONL 청크 파일을 단일 BM25 인덱스로 결합. 존재하지 않는 소스 파일은 건너뜀
+export async function loadBm25Index(
+  sources: string[] = ["jira", "confluence"],
+): Promise<Bm25Index> {
+  const index = new Bm25Index();
+  const perSource: Record<string, number> = {};
+  let totalChunks = 0;
+
+  for (const source of sources) {
+    const path = resolve(CHUNKED_DIR, `${source}.jsonl`);
+    if (!(await fileExists(path))) {
+      log.debug({ source, path }, "청크 파일 없음, 건너뜀");
+      continue;
+    }
+    const raw = await readFile(path, "utf8");
+    const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+    for (const line of lines) {
+      const chunk = Chunk.parse(JSON.parse(line));
+      index.add(chunk.id, chunk.content, chunk.metadata);
+    }
+    perSource[source] = lines.length;
+    totalChunks += lines.length;
+  }
+
   index.finalize();
-  log.info({ source, chunks: lines.length }, "BM25 인덱스 구축");
+  log.info({ sources: perSource, totalChunks }, "BM25 인덱스 구축");
   return index;
 }
 

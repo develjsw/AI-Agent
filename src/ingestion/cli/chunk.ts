@@ -12,7 +12,8 @@ function usage(): never {
   log.error(
     [
       "usage:",
-      "  pnpm chunk jira    # data/raw/jira/*.json → data/chunked/jira.jsonl",
+      "  pnpm chunk jira          # data/raw/jira/*.json → data/chunked/jira.jsonl",
+      "  pnpm chunk confluence    # data/raw/confluence/*.json → data/chunked/confluence.jsonl",
     ].join("\n"),
   );
   process.exit(1);
@@ -66,8 +67,11 @@ async function main() {
     case "jira":
       await chunkSource("jira");
       return;
+    case "confluence":
+      await chunkSource("confluence");
+      return;
     default:
-      log.error({ source }, "unknown source — supported: jira");
+      log.error({ source }, "unknown source — supported: jira, confluence");
       process.exit(1);
   }
 }
